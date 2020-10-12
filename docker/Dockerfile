@@ -124,7 +124,7 @@ RUN set -x \
     && apt-get update \
     && apt-get install -y --no-install-recommends $buildDeps \
     # remove internal index when internal plugins are seperated
-    && pip install -U /tmp/dist/*.whl -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip install -U /tmp/dist/*.whl -i http://pypi.douban.com/simple --trusted-host pypi.douban.com \
     && apt-get purge -y --auto-remove $buildDeps \
     # We install run-time dependencies strictly after
     # build dependencies to prevent accidental collusion.
