@@ -108,7 +108,6 @@ RUN set -x \
 RUN set -x \
     && npm config set registry https://registry.npmmirror.com \
     && cd ~ \
-    && uninstall trash \
     && npm install mjml
 
 EXPOSE 8000
