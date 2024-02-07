@@ -10,20 +10,13 @@ import logging
 
 from schedule import every
 
-from dispatch.config import (
-    DISPATCH_HELP_EMAIL,
-    INCIDENT_ONCALL_SERVICE_ID,
-    INCIDENT_RESOURCE_INCIDENT_REVIEW_DOCUMENT,
-    INCIDENT_RESOURCE_INVESTIGATION_DOCUMENT,
-)
-from dispatch.decorators import background_task
-from dispatch.document.service import get_by_incident_id_and_resource_type as get_document
+from dispatch.database.core import SessionLocal
+from dispatch.decorators import scheduled_project_task, timer
 from dispatch.incident import service as incident_service
 from dispatch.incident.enums import IncidentStatus
-from dispatch.individual import service as individual_service
 from dispatch.plugin import service as plugin_service
+from dispatch.project.models import Project
 from dispatch.scheduler import scheduler
-from dispatch.service import service as service_service
 from dispatch.task import service as task_service
 
 from .flows import create_reminder, group_tasks_by_assignee, create_or_update_task
@@ -35,89 +28,92 @@ TASK_SYNC_INTERVAL = 30  # seconds
 log = logging.getLogger(__name__)
 
 
-@scheduler.add(every(TASK_REMINDERS_INTERVAL).seconds, name="incident-task-reminders")
-@background_task
-def create_task_reminders(db_session=None):
-    """Creates multiple task reminders."""
-    tasks = task_service.get_overdue_tasks(db_session=db_session)
-    log.debug(f"New tasks that need reminders. NumTasks: {len(tasks)}")
-    # lets only remind for active incidents for now
-    tasks = [t for t in tasks if t.incident.status == IncidentStatus.active]
-    if tasks:
-        contact_fullname = contact_weblink = DISPATCH_HELP_EMAIL
-        # NOTE INCIDENT_ONCALL_SERVICE_ID is optional
-        if INCIDENT_ONCALL_SERVICE_ID:
-            oncall_service = service_service.get_by_external_id(
-                db_session=db_session, external_id=INCIDENT_ONCALL_SERVICE_ID
-            )
-            oncall_plugin = plugin_service.get_by_slug(
-                db_session=db_session, slug=oncall_service.type
-            )
-            if oncall_plugin.enabled:
-                log.warning(
-                    f"Unable to resolve oncall, INCIDENT_ONCALL_SERVICE_ID configured but associated plugin ({oncall_plugin.name}) is not enabled."
-                )
-                oncall_email = oncall_plugin.instance.get(service_id=INCIDENT_ONCALL_SERVICE_ID)
-                oncall_individual = individual_service.resolve_user_by_email(
-                    oncall_email, db_session
-                )
-                contact_fullname = oncall_individual["fullname"]
-                contact_weblink = oncall_individual["weblink"]
+@scheduler.add(every(TASK_REMINDERS_INTERVAL).seconds, name="create-incident-tasks-reminders")
+@scheduled_project_task
+def create_incident_tasks_reminders(db_session: SessionLocal, project: Project):
+    """Creates incident tasks reminders."""
+    overdue_tasks = task_service.get_overdue_tasks(db_session=db_session, project_id=project.id)
+    log.debug(f"Overdue tasks in {project.name} project that need reminders: {len(overdue_tasks)}")
 
+    tasks = [t for t in overdue_tasks if t.incident.status == IncidentStatus.active]
+
+    if tasks:
         grouped_tasks = group_tasks_by_assignee(tasks)
         for assignee, tasks in grouped_tasks.items():
-            create_reminder(db_session, assignee, tasks, contact_fullname, contact_weblink)
+            create_reminder(db_session, assignee, tasks, project.id)
 
 
-def sync_tasks(db_session, incidents, notify: bool = False):
+def sync_tasks(db_session, task_plugin, incidents, lookback: int = 60, notify: bool = False):
     """Syncs tasks and sends update notifications to incident channels."""
-    drive_task_plugin = plugin_service.get_active(db_session=db_session, plugin_type="task")
     for incident in incidents:
-        for doc_type in [
-            INCIDENT_RESOURCE_INVESTIGATION_DOCUMENT,
-            INCIDENT_RESOURCE_INCIDENT_REVIEW_DOCUMENT,
+        for document in [
+            incident.incident_document,
+            incident.incident_review_document,
         ]:
+            if not document:
+                # the document may have not been created yet (e.g. incident review document)
+                break
+
+            # we get the list of tasks in the document
             try:
-                # we get the document object
-                document = get_document(
-                    db_session=db_session, incident_id=incident.id, resource_type=doc_type
-                )
-
-                if not document:
-                    # the document may have not been created yet (e.g. incident review document)
-                    break
-
-                # we get the list of tasks in the document
-                tasks = drive_task_plugin.instance.list(file_id=document.resource_id)
-
-                for task in tasks:
-                    # we get the task information
-                    try:
-                        create_or_update_task(db_session, incident, task["task"], notify=notify)
-                    except Exception as e:
-                        log.exception(e)
+                tasks = task_plugin.instance.list(file_id=document.resource_id, lookback=lookback)
             except Exception as e:
-                log.exception(e)
+                log.warn(f"Unable to list tasks in document {document.resource_id}. Error: {e}")
+                continue
+
+            for task in tasks:
+                # we get the task information
+                try:
+                    create_or_update_task(
+                        db_session, incident, task, notify=notify, sync_external=False
+                    )
+                except Exception as e:
+                    log.exception(e)
 
 
-@scheduler.add(every(1).day, name="incident-daily-task-sync")
-@background_task
-def daily_sync_task(db_session=None):
+@scheduler.add(every(1).day, name="sync-incident-tasks-daily")
+@timer
+@scheduled_project_task
+def sync_incident_tasks_daily(db_session: SessionLocal, project: Project):
     """Syncs all incident tasks daily."""
-    incidents = incident_service.get_all(db_session=db_session).all()
-    sync_tasks(db_session, incidents, notify=False)
+    incidents = incident_service.get_all(db_session=db_session, project_id=project.id).all()
+    task_plugin = plugin_service.get_active_instance(
+        db_session=db_session, project_id=project.id, plugin_type="task"
+    )
+
+    if not task_plugin:
+        log.warning(
+            f"Daily incident tasks sync skipped. No task plugin enabled. Project: {project.name}. Organization: {project.organization.name}"
+        )
+        return
+
+    lookback = 60 * 60 * 24  # 24hrs
+    sync_tasks(db_session, task_plugin, incidents, lookback=lookback, notify=False)
 
 
-@scheduler.add(every(TASK_SYNC_INTERVAL).seconds, name="incident-task-sync")
-@background_task
-def sync_active_stable_tasks(db_session=None):
-    """Syncs incident tasks."""
+@scheduler.add(every(TASK_SYNC_INTERVAL).seconds, name="sync-active-stable-incident-tasks")
+@timer
+@scheduled_project_task
+def sync_active_stable_incident_tasks(db_session: SessionLocal, project: Project):
+    """Syncs active and stable incident tasks."""
+    task_plugin = plugin_service.get_active_instance(
+        db_session=db_session, project_id=project.id, plugin_type="task"
+    )
+
+    if not task_plugin:
+        log.warning(
+            f"Active and stable incident tasks sync skipped. No task plugin enabled. Project: {project.name}. Organization: {project.organization.name}"
+        )
+        return
+
     # we get all active and stable incidents
     active_incidents = incident_service.get_all_by_status(
-        db_session=db_session, status=IncidentStatus.active
+        db_session=db_session, project_id=project.id, status=IncidentStatus.active
     )
     stable_incidents = incident_service.get_all_by_status(
-        db_session=db_session, status=IncidentStatus.stable
+        db_session=db_session, project_id=project.id, status=IncidentStatus.stable
     )
+
     incidents = active_incidents + stable_incidents
-    sync_tasks(db_session, incidents, notify=True)
+    lookback = 60 * 10  # 10 min
+    sync_tasks(db_session, task_plugin, incidents, lookback=lookback, notify=True)

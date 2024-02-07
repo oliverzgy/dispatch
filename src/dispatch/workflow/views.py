@@ -1,85 +1,106 @@
-from typing import List
+from fastapi import APIRouter, HTTPException, status
+from pydantic.error_wrappers import ErrorWrapper, ValidationError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from dispatch.database.core import DbSession
+from dispatch.database.service import CommonParameters, search_filter_sort_paginate
+from dispatch.exceptions import NotFoundError
+from dispatch.models import PrimaryKey
+from dispatch.plugin import service as plugin_service
 
-from dispatch.database import get_db, search_filter_sort_paginate
+from .models import (
+    WorkflowInstanceCreate,
+    WorkflowPagination,
+    WorkflowRead,
+    WorkflowInstanceRead,
+    WorkflowCreate,
+    WorkflowUpdate,
+)
+from .service import create, delete, get, update, run, get_instance
 
-from .models import WorkflowPagination, WorkflowRead, WorkflowCreate, WorkflowUpdate
-from .service import create, delete, get, update
 
 router = APIRouter()
 
 
-@router.get("/", response_model=WorkflowPagination)
-def get_workflows(
-    db_session: Session = Depends(get_db),
-    page: int = 1,
-    items_per_page: int = Query(5, alias="itemsPerPage"),
-    query_str: str = Query(None, alias="q"),
-    sort_by: List[str] = Query(None, alias="sortBy[]"),
-    descending: List[bool] = Query(None, alias="descending[]"),
-    fields: List[str] = Query(None, alias="field[]"),
-    ops: List[str] = Query(None, alias="op[]"),
-    values: List[str] = Query(None, alias="value[]"),
-):
-    """
-    Get all workflows.
-    """
-    return search_filter_sort_paginate(
-        db_session=db_session,
-        model="Workflow",
-        query_str=query_str,
-        page=page,
-        items_per_page=items_per_page,
-        sort_by=sort_by,
-        descending=descending,
-        fields=fields,
-        values=values,
-        ops=ops,
-    )
+@router.get("", response_model=WorkflowPagination)
+def get_workflows(common: CommonParameters):
+    """Get all workflows."""
+    return search_filter_sort_paginate(model="Workflow", **common)
 
 
 @router.get("/{workflow_id}", response_model=WorkflowRead)
-def get_workflow(*, db_session: Session = Depends(get_db), workflow_id: int):
-    """
-    Get a workflow.
-    """
+def get_workflow(db_session: DbSession, workflow_id: PrimaryKey):
+    """Get a workflow."""
     workflow = get(db_session=db_session, workflow_id=workflow_id)
     if not workflow:
-        raise HTTPException(status_code=404, detail="A workflow with this id does not exist.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A workflow with this id does not exist."}],
+        )
     return workflow
 
 
-@router.post("/", response_model=WorkflowCreate)
-def create_workflow(*, db_session: Session = Depends(get_db), workflow_in: WorkflowCreate):
-    """
-    Create a new workflow.
-    """
-    workflow = create(db_session=db_session, workflow_in=workflow_in)
-    return workflow
+@router.get("/instances/{workflow_instance_id}", response_model=WorkflowInstanceRead)
+def get_workflow_instance(db_session: DbSession, workflow_instance_id: PrimaryKey):
+    """Get a workflow instance."""
+    workflow_instance = get_instance(db_session=db_session, instance_id=workflow_instance_id)
+    if not workflow_instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A workflow instance with this id does not exist."}],
+        )
+    return workflow_instance
 
 
-@router.put("/{workflow_id}", response_model=WorkflowUpdate)
-def update_workflow(
-    *, db_session: Session = Depends(get_db), workflow_id: int, workflow_in: WorkflowUpdate
-):
-    """
-    Update a workflow.
-    """
+@router.post("", response_model=WorkflowRead)
+def create_workflow(db_session: DbSession, workflow_in: WorkflowCreate):
+    """Create a new workflow."""
+    plugin_instance = plugin_service.get_instance(
+        db_session=db_session, plugin_instance_id=workflow_in.plugin_instance.id
+    )
+    if not plugin_instance:
+        raise ValidationError(
+            [ErrorWrapper(NotFoundError(msg="No plugin instance found."), loc="plugin_instance")],
+            model=WorkflowCreate,
+        )
+
+    return create(db_session=db_session, workflow_in=workflow_in)
+
+
+@router.put("/{workflow_id}", response_model=WorkflowRead)
+def update_workflow(db_session: DbSession, workflow_id: PrimaryKey, workflow_in: WorkflowUpdate):
+    """Update a workflow."""
     workflow = get(db_session=db_session, workflow_id=workflow_id)
     if not workflow:
-        raise HTTPException(status_code=404, detail="A workflow with this id does not exist.")
-    workflow = update(db_session=db_session, workflow=workflow, workflow_in=workflow_in)
-    return workflow
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A workflow with this id does not exist."}],
+        )
+    return update(db_session=db_session, workflow=workflow, workflow_in=workflow_in)
 
 
-@router.delete("/{workflow_id}")
-def delete_workflow(*, db_session: Session = Depends(get_db), workflow_id: int):
-    """
-    Delete a workflow.
-    """
+@router.delete("/{workflow_id}", response_model=None)
+def delete_workflow(db_session: DbSession, workflow_id: PrimaryKey):
+    """Delete a workflow."""
     workflow = get(db_session=db_session, workflow_id=workflow_id)
     if not workflow:
-        raise HTTPException(status_code=404, detail="A workflow with this id does not exist.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A workflow with this id does not exist."}],
+        )
     delete(db_session=db_session, workflow_id=workflow_id)
+
+
+@router.post("/{workflow_id}/run", response_model=WorkflowInstanceRead)
+def run_workflow(
+    db_session: DbSession,
+    workflow_id: PrimaryKey,
+    workflow_instance_in: WorkflowInstanceCreate,
+):
+    """Runs a workflow with a given set of parameters."""
+    workflow = get(db_session=db_session, workflow_id=workflow_id)
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A workflow with this id does not exist."}],
+        )
+    return run(db_session=db_session, workflow=workflow, workflow_instance_in=workflow_instance_in)

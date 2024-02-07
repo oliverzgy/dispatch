@@ -1,57 +1,63 @@
-import DefinitionApi from "@/definition/api"
-
 import { getField, updateField } from "vuex-map-fields"
 import { debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import DefinitionApi from "@/definition/api"
 
 const getDefaultSelectedState = () => {
   return {
     terms: [],
     text: null,
     id: null,
-    loading: false
+    project: null,
+    loading: false,
   }
 }
 
 const state = {
   selected: {
-    ...getDefaultSelectedState()
+    ...getDefaultSelectedState(),
   },
   dialogs: {
     showCreateEdit: false,
-    showRemove: false
+    showRemove: false,
   },
   table: {
     rows: {
       items: [],
-      total: null
+      total: null,
     },
     options: {
       q: "",
       page: 1,
-      itemsPerPage: 10,
-      sortBy: "text",
-      descending: true
+      itemsPerPage: 25,
+      sortBy: ["text"],
+      descending: true,
+      filters: {
+        project: [],
+      },
     },
-    loading: false
-  }
+    loading: false,
+  },
 }
 
 const getters = {
-  getField
+  getField,
 }
 
 const actions = {
   getAll: debounce(({ commit, state }) => {
-    commit("SET_TABLE_LOADING", true)
-    return DefinitionApi.getAll(state.table.options)
-      .then(response => {
+    commit("SET_TABLE_LOADING", "primary")
+    let params = SearchUtils.createParametersFromTableOptions(state.table.options, "Definition")
+    return DefinitionApi.getAll(params)
+      .then((response) => {
         commit("SET_TABLE_LOADING", false)
         commit("SET_TABLE_ROWS", response.data)
       })
       .catch(() => {
         commit("SET_TABLE_LOADING", false)
       })
-  }, 200),
+  }, 500),
   createEditShow({ commit }, definition) {
     commit("SET_DIALOG_CREATE_EDIT", true)
     if (definition) {
@@ -71,66 +77,60 @@ const actions = {
     commit("RESET_SELECTED")
   },
   save({ commit, dispatch }) {
+    commit("SET_SELECTED_LOADING", true)
+
     if (!state.selected.id) {
       return DefinitionApi.create(state.selected)
         .then(() => {
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Definition created successfully." }, { root: true })
-        })
-        .catch(err => {
+          commit("SET_SELECTED_LOADING", false)
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Definition not created. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Definition created successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     } else {
       return DefinitionApi.update(state.selected.id, state.selected)
         .then(() => {
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Definition updated successfully." }, { root: true })
-        })
-        .catch(err => {
+          commit("SET_SELECTED_LOADING", false)
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Definition not updated. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Definition updated successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     }
   },
   remove({ commit, dispatch }) {
-    return DefinitionApi.delete(state.selected.id)
-      .then(function() {
-        dispatch("closeRemove")
-        dispatch("getAll")
-        commit("app/SET_SNACKBAR", { text: "Definition deleted successfully." }, { root: true })
-      })
-      .catch(err => {
-        commit(
-          "app/SET_SNACKBAR",
-          {
-            text: "Definition not deleted. Reason: " + err.response.data.detail,
-            color: "red"
-          },
-          { root: true }
-        )
-      })
-  }
+    return DefinitionApi.delete(state.selected.id).then(function () {
+      dispatch("closeRemove")
+      dispatch("getAll")
+      commit(
+        "notification_backend/addBeNotification",
+        { text: "Definition deleted successfully.", type: "success" },
+        { root: true }
+      )
+    })
+  },
 }
 
 const mutations = {
   updateField,
   SET_SELECTED(state, value) {
     state.selected = Object.assign(state.selected, value)
+  },
+  SET_SELECTED_LOADING(state, value) {
+    state.selected.loading = value
   },
   SET_TABLE_LOADING(state, value) {
     state.table.loading = value
@@ -145,8 +145,11 @@ const mutations = {
     state.dialogs.showRemove = value
   },
   RESET_SELECTED(state) {
-    state.selected = Object.assign(state.selected, getDefaultSelectedState())
-  }
+    // do not reset project
+    let project = state.selected.project
+    state.selected = { ...getDefaultSelectedState() }
+    state.selected.project = project
+  },
 }
 
 export default {
@@ -154,5 +157,5 @@ export default {
   state,
   getters,
   actions,
-  mutations
+  mutations,
 }

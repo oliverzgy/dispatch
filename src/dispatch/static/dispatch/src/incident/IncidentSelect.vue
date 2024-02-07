@@ -1,110 +1,148 @@
 <template>
-  <v-autocomplete
-    v-model="incident"
+  <v-combobox
     :items="items"
-    item-text="name"
-    :search-input.sync="search"
-    :menu-props="{ maxHeight: '400' }"
-    hide-selected
     :label="label"
-    close
-    clearable
     :loading="loading"
-    return-object
-    cache-items
+    :menu-props="{ maxHeight: '400' }"
+    v-model:search="search"
+    @update:search="getFilteredData({ q: $event })"
+    item-title="name"
+    item-value="id"
+    clearable
+    v-model="incident"
   >
-    <template v-slot:selection="{ attr, on, item, selected }">
-      <v-chip v-bind="attr" :input-value="selected" v-on="on">
-        <span v-text="item.name"></span>
-      </v-chip>
-    </template>
-    <template v-slot:item="{ item }">
-      <v-list-item-content>
-        <v-list-item-title v-text="item.name"></v-list-item-title>
-        <v-list-item-subtitle v-text="item.title"></v-list-item-subtitle>
-      </v-list-item-content>
-    </template>
-    <template v-slot:no-data>
+    <template #no-data>
       <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No incidents matching "
-            <strong>{{ search }}</strong
-            >".
-          </v-list-item-title>
-        </v-list-item-content>
+        <v-list-item-title>
+          No incidents matching
+          <strong>"{{ search }}"</strong>
+        </v-list-item-title>
       </v-list-item>
     </template>
-  </v-autocomplete>
+    <template #item="data">
+      <v-list-item v-bind="data.props" :title="null">
+        <v-list-item-title>
+          {{ data.item.raw.name }}
+        </v-list-item-title>
+        <v-list-item-subtitle :title="data.item.raw.description">
+          {{ data.item.raw.description }}
+        </v-list-item-subtitle>
+      </v-list-item>
+    </template>
+    <template #append-item>
+      <v-list-item v-if="more" @click="loadMore()">
+        <v-list-item-subtitle> Load More </v-list-item-subtitle>
+      </v-list-item>
+    </template>
+  </v-combobox>
 </template>
 
 <script>
+import { cloneDeep, debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
 import IncidentApi from "@/incident/api"
-import { cloneDeep } from "lodash"
+
 export default {
-  name: "IncidentComboBox",
+  name: "IncidentSelect",
   props: {
-    value: {
-      type: Array,
-      default: function() {
-        return []
-      }
+    modelValue: {
+      type: Object,
+      default: function () {
+        return {}
+      },
     },
     label: {
       type: String,
-      default: function() {
-        return "Incident"
-      }
-    }
+      default: "Incident",
+    },
+    project: {
+      type: Object,
+      default: null,
+    },
   },
-
   data() {
     return {
       loading: false,
       items: [],
-      search: null
+      more: false,
+      numItems: 5,
+      search: null,
     }
   },
 
   computed: {
     incident: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
-        this.$emit("input", value)
-      }
-    }
+        if (typeof value !== "string") {
+          this.$emit("update:modelValue", value)
+        }
+      },
+    },
   },
 
-  watch: {
-    search(val) {
-      val && val !== this.select && this.querySelections(val)
-    },
-    value(val) {
-      if (!val) return
-      this.items.push(val)
-    }
+  created() {
+    this.fetchData()
+    this.$watch(
+      (vm) => [vm.project],
+      () => {
+        this.fetchData()
+      }
+    )
   },
 
   methods: {
-    querySelections(v) {
-      this.loading = true
-      // Simulated ajax query
-      IncidentApi.getAll({ q: v }).then(response => {
+    loadMore() {
+      this.numItems = this.numItems + 5
+      this.fetchData()
+    },
+    fetchData() {
+      this.error = null
+      this.loading = "error"
+
+      let filterOptions = {
+        q: this.search,
+        itemsPerPage: this.numItems,
+      }
+
+      if (this.project) {
+        filterOptions = {
+          ...filterOptions,
+          filters: {
+            project: [this.project],
+          },
+        }
+      }
+
+      filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+
+      IncidentApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
+
+        if (this.incident) {
+          // check to see if the current selection is available in the list and if not we add it
+          if (!this.items.find((match) => match.id === this.incident.id)) {
+            this.items = [this.incident].concat(this.items)
+          }
+        }
+
+        this.total = response.data.total
+
+        if (this.items.length < this.total) {
+          this.more = true
+        } else {
+          this.more = false
+        }
+
         this.loading = false
       })
-    }
+    },
+    getFilteredData: debounce(function () {
+      this.fetchData()
+    }, 500),
   },
-
-  mounted() {
-    this.error = null
-    this.loading = true
-    IncidentApi.getAll().then(response => {
-      this.items = response.data.items
-      this.loading = false
-    })
-  }
 }
 </script>

@@ -3,21 +3,25 @@ from typing import List, Optional
 
 from sqlalchemy import or_
 
+from dispatch.config import DISPATCH_UI_URL
 from dispatch.event import service as event_service
 from dispatch.incident import flows as incident_flows
 from dispatch.incident.flows import incident_service
-from dispatch.ticket import service as ticket_service
-from .models import Task, TaskStatus, TaskUpdate, TaskCreate
+from dispatch.incident.models import Incident
+from dispatch.plugin import service as plugin_service
+
+from .enums import TaskStatus
+from .models import Task, TaskCreate, TaskUpdate
 
 
 def get(*, db_session, task_id: int) -> Optional[Task]:
-    """Get a single task by ID."""
+    """Get a single task by id."""
     return db_session.query(Task).filter(Task.id == task_id).first()
 
 
 def get_by_resource_id(*, db_session, resource_id: str) -> Optional[Task]:
     """Get a single task by resource id."""
-    return db_session.query(Task).filter(Task.resource_id == resource_id).first()
+    return db_session.query(Task).filter(Task.resource_id == resource_id).one_or_none()
 
 
 def get_all(*, db_session) -> List[Optional[Task]]:
@@ -35,23 +39,28 @@ def get_all_by_incident_id_and_status(
 ) -> List[Optional[Task]]:
     """Get all tasks by incident id and status."""
     return (
-        db_session.query(Task).filter(Task.incident_id == incident_id).filter(Task.status == status)
+        db_session.query(Task)
+        .filter(Task.incident_id == incident_id)
+        .filter(Task.status == status)
+        .all()
     )
 
 
-def get_overdue_tasks(*, db_session) -> List[Optional[Task]]:
+def get_overdue_tasks(*, db_session, project_id: int) -> List[Optional[Task]]:
     """Returns all tasks that have not been resolved and are past due date."""
     # TODO ensure that we don't send reminders more than their interval
     return (
         db_session.query(Task)
+        .join(Incident)
         .filter(Task.status == TaskStatus.open)
         .filter(Task.reminders == True)  # noqa
+        .filter(Incident.project_id == project_id)
         .filter(Task.resolve_by < datetime.utcnow())
         .filter(
             or_(
                 Task.last_reminder_at + timedelta(days=1)
                 < datetime.utcnow(),  # daily reminders after due date.
-                Task.last_reminder_at == None,
+                Task.last_reminder_at == None,  # noqa
             )
         )
         .all()
@@ -61,10 +70,6 @@ def get_overdue_tasks(*, db_session) -> List[Optional[Task]]:
 def create(*, db_session, task_in: TaskCreate) -> Task:
     """Create a new task."""
     incident = incident_service.get(db_session=db_session, incident_id=task_in.incident.id)
-    tickets = [
-        ticket_service.get_or_create_by_weblink(db_session=db_session, weblink=t.weblink)
-        for t in task_in.tickets
-    ]
 
     assignees = []
     for i in task_in.assignees:
@@ -75,11 +80,10 @@ def create(*, db_session, task_in: TaskCreate) -> Task:
         )
 
         # due to the freeform nature of task assignment, we can sometimes pick up other emails
-        # e.g. a google group that we cannont resolve to an individual assignee
+        # e.g. a google group that we cannot resolve to an individual assignee
         if assignee:
             assignees.append(assignee)
 
-    creator_email = None
     if not task_in.creator:
         creator_email = task_in.owner.individual.email
     else:
@@ -106,21 +110,29 @@ def create(*, db_session, task_in: TaskCreate) -> Task:
     else:
         owner = incident.commander
 
+    # set a reasonable default weblink for tasks
+    weblink = f"{DISPATCH_UI_URL}/{incident.project.organization.name}/tasks"
+
+    if task_in.weblink:
+        weblink = task_in.weblink
+
     task = Task(
-        **task_in.dict(exclude={"assignees", "owner", "incident", "creator", "tickets"}),
+        **task_in.dict(exclude={"assignees", "weblink", "owner", "incident", "creator"}),
         creator=creator,
         owner=owner,
         assignees=assignees,
         incident=incident,
-        tickets=tickets,
+        weblink=weblink,
     )
 
-    event_service.log(
+    event_service.log_incident_event(
         db_session=db_session,
         source="Dispatch Core App",
-        description="New incident task created",
+        description=f"New incident task created by {creator.individual.name}",
+        individual_id=creator.individual.id,
         details={"weblink": task.weblink},
         incident_id=incident.id,
+        owner=creator.individual.name,
     )
 
     db_session.add(task)
@@ -128,39 +140,70 @@ def create(*, db_session, task_in: TaskCreate) -> Task:
     return task
 
 
-def update(*, db_session, task: Task, task_in: TaskUpdate) -> Task:
+def update(*, db_session, task: Task, task_in: TaskUpdate, sync_external: bool = True) -> Task:
     """Update an existing task."""
-    # ensure we add assignee as participant if they are not one already
-    assignees = []
-    for i in task_in.assignees:
-        assignees.append(
-            incident_flows.incident_add_or_reactivate_participant_flow(
+    # we add the assignees of the task to the incident if the status of the task is open
+    if task_in.status == TaskStatus.open:
+        # we don't allow a task to be unassigned
+        if task_in.assignees:
+            assignees = []
+            for i in task_in.assignees:
+                assignees.append(
+                    incident_flows.incident_add_or_reactivate_participant_flow(
+                        db_session=db_session,
+                        incident_id=task.incident.id,
+                        user_email=i.individual.email,
+                    )
+                )
+            task.assignees = assignees
+
+    # we add the owner of the task to the incident if the status of the task is open
+    if task_in.owner:
+        if task_in.status == TaskStatus.open:
+            task.owner = incident_flows.incident_add_or_reactivate_participant_flow(
                 db_session=db_session,
                 incident_id=task.incident.id,
-                user_email=i.individual.email,
+                user_email=task_in.owner.individual.email,
             )
-        )
-
-    task.assignees = assignees
-
-    # we add owner as a participant if they are not one already
-    if task_in.owner:
-        task.owner = incident_flows.incident_add_or_reactivate_participant_flow(
-            db_session=db_session,
-            incident_id=task.incident.id,
-            user_email=task_in.owner.individual.email,
-        )
 
     update_data = task_in.dict(
-        skip_defaults=True, exclude={"assignees", "owner", "creator", "incident", "tickets"}
+        skip_defaults=True, exclude={"assignees", "owner", "creator", "incident"}
     )
 
     for field in update_data.keys():
         setattr(task, field, update_data[field])
 
-    db_session.add(task)
+    # if we have an external task plugin enabled, attempt to update the external resource as well
+    # we don't currently have a good way to get the correct file_id (we don't store a task <-> relationship)
+    # lets try in both the incident doc and PIR doc
+    drive_task_plugin = plugin_service.get_active_instance(
+        db_session=db_session, project_id=task.incident.project.id, plugin_type="task"
+    )
+
+    if drive_task_plugin:
+        if sync_external:
+            try:
+                if task.incident.incident_document:
+                    file_id = task.incident.incident_document.resource_id
+                    drive_task_plugin.instance.update(
+                        file_id, task.resource_id, resolved=task.status
+                    )
+            except Exception:
+                if task.incident.incident_review_document:
+                    file_id = task.incident.incident_review_document.resource_id
+                    drive_task_plugin.instance.update(
+                        file_id, task.resource_id, resolved=task.status
+                    )
+
     db_session.commit()
     return task
+
+
+def resolve_or_reopen(*, db_session, task_id: int, status: str) -> None:
+    """Resolve an existing task or re-open it."""
+    task = db_session.query(Task).filter(Task.id == task_id).first()
+    task.status = status
+    db_session.commit()
 
 
 def delete(*, db_session, task_id: int):

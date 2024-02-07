@@ -1,25 +1,15 @@
-import pytest
-
-
-def test_get_conversation(session, conversation):
+def test_get(session, conversation):
     from dispatch.conversation.service import get
 
     t_conversation = get(db_session=session, conversation_id=conversation.id)
     assert t_conversation.id == conversation.id
 
 
-def test_get_by_channel_id(session, conversation):
-    from dispatch.conversation.service import get_by_channel_id
-
-    t_conversation = get_by_channel_id(db_session=session, channel_id=conversation.channel_id)
-    assert t_conversation.channel_id == conversation.channel_id
-
-
 def test_get_all(session, conversations):
     from dispatch.conversation.service import get_all
 
     t_conversations = get_all(db_session=session).all()
-    assert len(t_conversations) > 1
+    assert t_conversations
 
 
 def test_create(session):
@@ -36,6 +26,23 @@ def test_create(session):
     )
     conversation = create(db_session=session, conversation_in=conversation_in)
     assert conversation
+
+
+def test_update(session, conversation):
+    from dispatch.conversation.service import update
+    from dispatch.conversation.models import ConversationUpdate
+
+    channel_id = "channel_id"
+
+    conversation_in = ConversationUpdate(
+        channel_id=channel_id,
+    )
+    conversation = update(
+        db_session=session,
+        conversation=conversation,
+        conversation_in=conversation_in,
+    )
+    assert conversation.channel_id == channel_id
 
 
 def test_delete(session, conversation):

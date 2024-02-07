@@ -1,5 +1,5 @@
-import AuthLayout from "@/components/layouts/AuthLayout"
-import DefaultLayout from "@/components/layouts/DefaultLayout"
-import DashboardLayout from "@/components/layouts/DashboardLayout"
+import DefaultLayout from "@/components/layouts/DefaultLayout.vue"
+import DashboardLayout from "@/components/layouts/DashboardLayout.vue"
+import BasicLayout from "@/components/layouts/BasicLayout.vue"
 
-export { AuthLayout, DefaultLayout, DashboardLayout }
+export { BasicLayout, DefaultLayout, DashboardLayout }

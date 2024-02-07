@@ -1,98 +1,103 @@
 <template>
-  <v-card class="mx-auto">
-    <v-subheader>Search results for: "{{ query }}"</v-subheader>
-    <v-list v-if="!results.length">
-      <v-list-item no-action>
-        <v-list-item-content>
-          <v-list-item-title class="title"
-            >Sorry, we didn't find anything matching your query.</v-list-item-title
-          >
-        </v-list-item-content>
-      </v-list-item>
-    </v-list>
-    <div v-else>
-      <incident-list :items="incidents" />
-      <task-list :items="tasks" />
-      <term-list :items="terms" />
-      <definition-list :items="definitions" />
-      <tag-list :items="tags" />
-      <individual-list :items="individuals" />
-      <team-list :items="teams" />
-      <service-list :items="services" />
-    </div>
+  <v-card class="mx-auto" variant="flat" :loading="loading">
+    <div class="text-h6 pl-4">Search results for: "{{ query }}"</div>
+    <v-expansion-panels>
+      <v-expansion-panel>
+        <v-expansion-panel-title>
+          Incidents ({{ results.incidents.length }})
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <incident-summary-table :items="results.incidents" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>Cases ({{ results.cases.length }})</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <case-summary-table :items="results.cases" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>Tasks ({{ results.tasks.length }})</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <task-summary-table :items="results.tasks" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>Sources ({{ results.sources.length }})</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <source-summary-table :items="results.sources" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>Queries ({{ results.queries.length }})</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <query-summary-table :items="results.sources" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>
+          Documents ({{ results.documents.length }})
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <document-summary-table :items="results.documents" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+      <v-expansion-panel>
+        <v-expansion-panel-title>Tags ({{ results.tags.length }})</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <tag-summary-table :items="results.tags" />
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+    </v-expansion-panels>
   </v-card>
 </template>
 
 <script>
 import { mapState } from "vuex"
-import IncidentList from "@/incident/List.vue"
-import ServiceList from "@/service/List.vue"
-import IndividualList from "@/individual/List.vue"
-import TeamList from "@/team/List.vue"
-import DefinitionList from "@/definition/List.vue"
-import TermList from "@/term/List.vue"
-import TagList from "@/tag/List.vue"
-import TaskList from "@/task/List.vue"
+import { mapActions } from "vuex"
+import IncidentSummaryTable from "@/incident/IncidentSummaryTable.vue"
+import CaseSummaryTable from "@/case/CaseSummaryTable.vue"
+import TaskSummaryTable from "@/task/TaskSummaryTable.vue"
+import SourceSummaryTable from "@/data/source/SourceSummaryTable.vue"
+import QuerySummaryTable from "@/data/query/QuerySummaryTable.vue"
+import DocumentSummaryTable from "@/document/DocumentSummaryTable.vue"
+import TagSummaryTable from "@/tag/TagSummaryTable.vue"
+
 export default {
   name: "SearchResultList",
   components: {
-    IncidentList,
-    ServiceList,
-    IndividualList,
-    DefinitionList,
-    TermList,
-    TeamList,
-    TagList,
-    TaskList
+    IncidentSummaryTable,
+    CaseSummaryTable,
+    TaskSummaryTable,
+    DocumentSummaryTable,
+    SourceSummaryTable,
+    QuerySummaryTable,
+    TagSummaryTable,
   },
   data() {
     return {}
   },
-
-  computed: {
-    ...mapState("search", ["results", "query"]),
-    definitions() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("definition")
-      })
+  created() {
+    this.fetchDetails()
+  },
+  watch: {
+    query: function (q) {
+      // update URL in browser and search for new query
+      this.$router.push({ name: "ResultList", query: { q: q } })
+      this.setQuery(q)
+      this.getResults()
     },
-    services() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("service")
-      })
-    },
-    individuals() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("individual_contact")
-      })
-    },
-    teams() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("team")
-      })
-    },
-    terms() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("term")
-      })
-    },
-    tags() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("tag")
-      })
-    },
-    tasks() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("task")
-      })
-    },
-    incidents() {
-      return this.results.filter(item => {
-        return item.type.toLowerCase().includes("incident")
-      })
-    }
   },
 
-  methods: {}
+  computed: {
+    ...mapState("search", ["results", "query", "loading"]),
+  },
+  methods: {
+    fetchDetails() {
+      this.setQuery(this.$route.query.q)
+      this.getResults()
+    },
+    ...mapActions("search", ["setQuery", "getResults"]),
+  },
 }
 </script>

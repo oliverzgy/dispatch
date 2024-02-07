@@ -6,9 +6,8 @@ from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, event
 from sqlalchemy.orm import relationship
 from sqlalchemy_utils import JSONType, TSVectorType
 
-
-from dispatch.database import Base
-from dispatch.models import DispatchBase
+from dispatch.database.core import Base
+from dispatch.models import DispatchBase, Pagination
 
 from .enums import ReportTypes
 
@@ -21,7 +20,7 @@ class Report(Base):
     type = Column(String, nullable=False, server_default=ReportTypes.tactical_report)
 
     # relationships
-    incident_id = Column(Integer, ForeignKey("incident.id"))
+    incident_id = Column(Integer, ForeignKey("incident.id", ondelete="CASCADE", use_alter=True))
     participant_id = Column(Integer, ForeignKey("participant.id"))
     document = relationship("Document", uselist=False, backref="report")
 
@@ -56,6 +55,17 @@ class ReportRead(ReportBase):
     created_at: Optional[datetime] = None
 
 
-class ReportPagination(ReportBase):
-    total: int
+class ReportPagination(Pagination):
     items: List[ReportRead] = []
+
+
+class TacticalReportCreate(DispatchBase):
+    conditions: str
+    actions: str
+    needs: str
+
+
+class ExecutiveReportCreate(DispatchBase):
+    current_status: str
+    overview: str
+    next_steps: str

@@ -5,13 +5,11 @@
     :license: Apache, see LICENSE for more details.
 .. moduleauthor:: Kevin Glisson <kglisson@netflix.com>
 """
-from dispatch.models import PluginOptionModel
 from dispatch.plugins.base import Plugin
 
 
 class StoragePlugin(Plugin):
     type = "storage"
-    _schema = PluginOptionModel
 
     def get(self, **kwargs):
         raise NotImplementedError
@@ -35,6 +33,9 @@ class StoragePlugin(Plugin):
         raise NotImplementedError
 
     def open(self, **kwargs):
+        raise NotImplementedError
+
+    def mark_readonly(self, folder_id: str, **kwargs):
         raise NotImplementedError
 
     def add_file(self, **kwargs):

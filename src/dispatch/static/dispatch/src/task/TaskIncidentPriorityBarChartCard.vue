@@ -1,39 +1,42 @@
 <template>
-  <v-card :loading="loading">
-    <v-card-title>Priorities</v-card-title>
-    <apexchart type="bar" height="250" :options="chartOptions" :series="series"></apexchart>
-  </v-card>
+  <dashboard-card
+    :loading="loading"
+    type="bar"
+    :options="chartOptions"
+    :series="series"
+    title="Priorities"
+  />
 </template>
 
 <script>
 import { countBy, forEach } from "lodash"
+import DashboardCard from "@/dashboard/DashboardCard.vue"
 
-import VueApexCharts from "vue-apexcharts"
 export default {
   name: "TaskIncidentPriorityBarChartCard",
 
   props: {
-    value: {
+    modelValue: {
       type: Object,
-      default: function() {
+      default: function () {
         return {}
-      }
+      },
     },
     loading: {
-      type: Boolean,
-      default: function() {
+      type: [String, Boolean],
+      default: function () {
         return false
-      }
-    }
+      },
+    },
   },
 
   components: {
-    apexchart: VueApexCharts
+    DashboardCard,
   },
 
   data() {
     return {
-      order: ["High", "Medium", "Low", "Info"]
+      order: ["High", "Medium", "Low"],
     }
   },
 
@@ -44,42 +47,45 @@ export default {
           type: "bar",
           height: 350,
           stacked: true,
+          animations: {
+            enabled: false,
+          },
           toolbar: {
-            show: false
-          }
+            show: false,
+          },
         },
         responsive: [
           {
             options: {
               legend: {
-                position: "top"
-              }
-            }
-          }
+                position: "top",
+              },
+            },
+          },
         ],
-        colors: ["#FF4560", "#FEB019", "#00E396", "#008FFB"],
+        colors: ["#FF4560", "#FEB019", "#008FFB"],
         xaxis: {
           categories: this.categoryData || [],
           title: {
-            text: "Month"
-          }
+            text: "Month",
+          },
         },
         fill: {
-          opacity: 1
+          opacity: 1,
         },
         legend: {
-          position: "top"
-        }
+          position: "top",
+        },
       }
     },
     series() {
       let aggCount = {}
-      forEach(this.value, function(value) {
-        let count = countBy(value, function(item) {
+      forEach(this.modelValue, function (value) {
+        let count = countBy(value, function (item) {
           return item.incident.incident_priority.name
         })
 
-        forEach(count, function(value, key) {
+        forEach(count, function (value, key) {
           if (aggCount[key]) {
             aggCount[key].push(value)
           } else {
@@ -89,7 +95,7 @@ export default {
       })
 
       let series = []
-      forEach(this.order, function(o) {
+      forEach(this.order, function (o) {
         if (aggCount[o]) {
           series.push({ name: o, data: aggCount[o] })
         } else {
@@ -99,8 +105,8 @@ export default {
       return series
     },
     categoryData() {
-      return Object.keys(this.value)
-    }
-  }
+      return Object.keys(this.modelValue)
+    },
+  },
 }
 </script>

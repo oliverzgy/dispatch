@@ -1,101 +1,112 @@
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from dispatch.database.core import DbSession
+from dispatch.database.service import CommonParameters, search_filter_sort_paginate
+from dispatch.auth.permissions import SensitiveProjectActionPermission, PermissionsDependency
+from dispatch.models import PrimaryKey
 
-from dispatch.exceptions import InvalidConfiguration
-from dispatch.database import get_db, search_filter_sort_paginate
+from .models import (
+    PluginEventPagination,
+    PluginInstanceRead,
+    PluginInstanceCreate,
+    PluginInstanceUpdate,
+    PluginInstancePagination,
+    PluginPagination,
+)
+from .service import get_instance, update_instance, create_instance, delete_instance
 
-from .models import PluginCreate, PluginPagination, PluginRead, PluginUpdate
-from .service import get, update
 
 router = APIRouter()
 
 
-@router.get("/", response_model=PluginPagination)
-def get_plugins(
-    db_session: Session = Depends(get_db),
-    page: int = 1,
-    items_per_page: int = Query(5, alias="itemsPerPage"),
-    query_str: str = Query(None, alias="q"),
-    sort_by: List[str] = Query(None, alias="sortBy[]"),
-    descending: List[bool] = Query(None, alias="descending[]"),
-    fields: List[str] = Query(None, alias="field[]"),
-    ops: List[str] = Query(None, alias="op[]"),
-    values: List[str] = Query(None, alias="value[]"),
-):
-    """
-    Get all plugins.
-    """
-    return search_filter_sort_paginate(
-        db_session=db_session,
-        model="Plugin",
-        query_str=query_str,
-        page=page,
-        items_per_page=items_per_page,
-        sort_by=sort_by,
-        descending=descending,
-        fields=fields,
-        values=values,
-        ops=ops,
-    )
+@router.get("", response_model=PluginPagination)
+def get_plugins(common: CommonParameters):
+    """Get all plugins."""
+    return search_filter_sort_paginate(model="Plugin", **common)
 
 
-@router.get("/{plugin_type}", response_model=PluginPagination)
-def get_plugins_by_type(
-    plugin_type: str,
-    db_session: Session = Depends(get_db),
-    page: int = 1,
-    items_per_page: int = Query(5, alias="itemsPerPage"),
-    query_str: str = Query(None, alias="q"),
-    sort_by: List[str] = Query(None, alias="sortBy[]"),
-    descending: List[bool] = Query(None, alias="descending[]"),
-    fields: List[str] = Query(None, alias="field[]"),
-    ops: List[str] = Query(None, alias="op[]"),
-    values: List[str] = Query(None, alias="value[]"),
-):
-    """
-    Get all plugins.
-    """
-    return search_filter_sort_paginate(
-        db_session=db_session,
-        model="Plugin",
-        query_str=query_str,
-        page=page,
-        items_per_page=items_per_page,
-        sort_by=sort_by,
-        descending=descending,
-        fields=["type"],
-        values=[plugin_type],
-        ops=["=="],
-    )
+@router.get(
+    "/instances",
+    response_model=PluginInstancePagination,
+)
+def get_plugin_instances(common: CommonParameters):
+    """Get all plugin instances."""
+    return search_filter_sort_paginate(model="PluginInstance", **common)
 
 
-@router.get("/{plugin_id}", response_model=PluginRead)
-def get_plugin(*, db_session: Session = Depends(get_db), plugin_id: int):
-    """
-    Get a plugin.
-    """
-    plugin = get(db_session=db_session, plugin_id=plugin_id)
+@router.get(
+    "/instances/{plugin_instance_id}",
+    response_model=PluginInstanceRead,
+    dependencies=[Depends(PermissionsDependency([SensitiveProjectActionPermission]))],
+)
+def get_plugin_instance(db_session: DbSession, plugin_instance_id: PrimaryKey):
+    """Get a plugin instance."""
+    plugin = get_instance(db_session=db_session, plugin_instance_id=plugin_instance_id)
     if not plugin:
-        raise HTTPException(status_code=404, detail="The plugin with this id does not exist.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A plugin instance with this id does not exist."}],
+        )
     return plugin
 
 
-@router.put("/{plugin_id}", response_model=PluginCreate)
-def update_plugin(
-    *, db_session: Session = Depends(get_db), plugin_id: int, plugin_in: PluginUpdate
+@router.post(
+    "/instances",
+    response_model=PluginInstanceRead,
+    dependencies=[Depends(PermissionsDependency([SensitiveProjectActionPermission]))],
+)
+def create_plugin_instance(db_session: DbSession, plugin_instance_in: PluginInstanceCreate):
+    """Create a new plugin instance."""
+    return create_instance(db_session=db_session, plugin_instance_in=plugin_instance_in)
+
+
+@router.put(
+    "/instances/{plugin_instance_id}",
+    response_model=PluginInstanceCreate,
+    dependencies=[Depends(PermissionsDependency([SensitiveProjectActionPermission]))],
+)
+def update_plugin_instance(
+    db_session: DbSession,
+    plugin_instance_id: PrimaryKey,
+    plugin_instance_in: PluginInstanceUpdate,
 ):
-    """
-    Update a plugin.
-    """
-    plugin = get(db_session=db_session, plugin_id=plugin_id)
-    if not plugin:
-        raise HTTPException(status_code=404, detail="The plugin with this id does not exist.")
+    """Update a plugin instance."""
+    plugin_instance = get_instance(db_session=db_session, plugin_instance_id=plugin_instance_id)
+    if not plugin_instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A plugin instance with this id does not exist."}],
+        )
 
-    try:
-        plugin = update(db_session=db_session, plugin=plugin, plugin_in=plugin_in)
-    except InvalidConfiguration as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    plugin_instance = update_instance(
+        db_session=db_session,
+        plugin_instance=plugin_instance,
+        plugin_instance_in=plugin_instance_in,
+    )
 
-    return plugin
+    return plugin_instance
+
+
+@router.delete(
+    "/instances/{plugin_instance_id}",
+    response_model=None,
+    dependencies=[Depends(PermissionsDependency([SensitiveProjectActionPermission]))],
+)
+def delete_plugin_instances(
+    db_session: DbSession,
+    plugin_instance_id: PrimaryKey,
+):
+    """Deletes an existing plugin instance."""
+    plugin_instance = get_instance(db_session=db_session, plugin_instance_id=plugin_instance_id)
+    if not plugin_instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A plugin instance with this id does not exist."}],
+        )
+    delete_instance(db_session=db_session, plugin_instance_id=plugin_instance_id)
+
+
+@router.get("/plugin_events", response_model=PluginEventPagination)
+def get_plugin_events(common: CommonParameters):
+    """Get all plugins."""
+    return search_filter_sort_paginate(model="PluginEvent", **common)

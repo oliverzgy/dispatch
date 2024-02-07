@@ -1,39 +1,35 @@
 <template>
   <v-combobox
-    v-model="incident"
     :items="items"
-    item-text="name"
-    :search-input.sync="search"
-    :menu-props="{ maxHeight: '400' }"
-    hide-selected
     :label="label"
-    multiple
-    chips
-    close
-    clearable
     :loading="loading"
-    @update:search-input="fetchData({ q: $event })"
+    :menu-props="{ maxHeight: '400' }"
+    v-model:search="search"
+    @update:search="fetchData({ q: $event })"
+    chips
+    clearable
+    closable-chips
+    hide-selected
+    item-title="name"
+    item-value="id"
+    multiple
+    no-filter
+    v-model="incident"
   >
-    <template v-slot:selection="{ attr, on, item, selected }">
-      <v-chip v-bind="attr" :input-value="selected" v-on="on">
-        <span v-text="item.name"></span>
-      </v-chip>
+    <template #item="{ item, props }">
+      <v-list-item v-bind="props" :title="null">
+        <v-list-item-title>{{ item.raw.name }}</v-list-item-title>
+        <v-list-item-subtitle :title="item.raw.title">
+          {{ item.raw.title }}
+        </v-list-item-subtitle>
+      </v-list-item>
     </template>
-    <template v-slot:item="{ item }">
-      <v-list-item-content>
-        <v-list-item-title v-text="item.name"></v-list-item-title>
-        <v-list-item-subtitle v-text="item.title"></v-list-item-subtitle>
-      </v-list-item-content>
-    </template>
-    <template v-slot:no-data>
+    <template #no-data>
       <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No incidents matching "
-            <strong>{{ search }}</strong
-            >".
-          </v-list-item-title>
-        </v-list-item-content>
+        <v-list-item-title>
+          No incidents matching "<strong>{{ search }}</strong
+          >".
+        </v-list-item-title>
       </v-list-item>
     </template>
   </v-combobox>
@@ -45,47 +41,44 @@ import { cloneDeep, debounce } from "lodash"
 export default {
   name: "IncidentComboBox",
   props: {
-    value: {
+    modelValue: {
       type: Array,
-      default: function() {
+      default: function () {
         return []
-      }
+      },
     },
     label: {
       type: String,
-      default: function() {
+      default: function () {
         return "Incident"
-      }
-    }
+      },
+    },
   },
 
   data() {
     return {
       loading: false,
       items: [],
-      search: null
+      search: null,
     }
   },
 
   computed: {
     incident: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
-        this._incidents = value.map(v => {
+        const incidents = value.filter((v) => {
           if (typeof v === "string") {
-            v = {
-              name: v
-            }
-            this.items.push(v)
+            return false
           }
-          return v
+          return true
         })
-        this.$emit("input", this._incidents)
+        this.$emit("update:modelValue", incidents)
         this.search = null
-      }
-    }
+      },
+    },
   },
 
   created() {
@@ -95,15 +88,15 @@ export default {
   methods: {
     fetchData(filterOptions) {
       this.error = null
-      this.loading = true
-      IncidentApi.getAll(filterOptions).then(response => {
+      this.loading = "error"
+      IncidentApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
         this.loading = false
       })
     },
-    getFilteredData: debounce(function(options) {
+    getFilteredData: debounce(function (options) {
       this.fetchData(options)
-    }, 500)
-  }
+    }, 500),
+  },
 }
 </script>

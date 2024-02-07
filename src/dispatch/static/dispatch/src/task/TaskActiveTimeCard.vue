@@ -1,41 +1,44 @@
 <template>
-  <v-card :loading="loading">
-    <v-card-title>Mean Resolve Time (Created -> Resolved)</v-card-title>
-    <apexchart type="line" height="250" :options="chartOptions" :series="series"></apexchart>
-  </v-card>
+  <dashboard-card
+    :loading="loading"
+    type="line"
+    :options="chartOptions"
+    :series="series"
+    title="Mean Resolve Time (Created -> Resolved)"
+  />
 </template>
 
 <script>
 import { forEach, sumBy } from "lodash"
 import differenceInHours from "date-fns/differenceInHours"
 import parseISO from "date-fns/parseISO"
-import VueApexCharts from "vue-apexcharts"
+import DashboardCard from "@/dashboard/DashboardCard.vue"
 export default {
   name: "TaskActiveTimeCard",
 
   props: {
-    value: {
+    modelValue: {
       type: Object,
-      default: function() {
+      default: function () {
         return {}
-      }
+      },
     },
     interval: {
       type: String,
-      default: function() {
+      default: function () {
         return "Month"
-      }
+      },
     },
     loading: {
-      type: Boolean,
-      default: function() {
+      type: [String, Boolean],
+      default: function () {
         return false
-      }
-    }
+      },
+    },
   },
 
   components: {
-    apexchart: VueApexCharts
+    DashboardCard,
   },
 
   data() {
@@ -45,10 +48,10 @@ export default {
   computed: {
     series() {
       let series = { name: "Average Hours Active", data: [] }
-      forEach(this.value, function(value) {
+      forEach(this.modelValue, function (value) {
         series.data.push(
           Math.round(
-            sumBy(value, function(item) {
+            sumBy(value, function (item) {
               let endTime = new Date().toISOString()
               if (item.resolved_at) {
                 endTime = item.resolved_at
@@ -66,35 +69,38 @@ export default {
         chart: {
           height: 350,
           type: "line",
+          animations: {
+            enabled: false,
+          },
           toolbar: {
-            show: false
-          }
+            show: false,
+          },
         },
         xaxis: {
-          categories: Object.keys(this.value) || [],
+          categories: Object.keys(this.modelValue) || [],
           title: {
-            text: this.interval
-          }
+            text: this.interval,
+          },
         },
         dataLabels: {
-          enabled: true
+          enabled: true,
         },
         stroke: {
-          curve: "smooth"
+          curve: "smooth",
         },
         markers: {
-          size: 1
+          size: 1,
         },
         yaxis: {
           title: {
-            text: "Hours"
-          }
+            text: "Hours",
+          },
         },
         legend: {
-          position: "top"
-        }
+          position: "top",
+        },
       }
-    }
-  }
+    },
+  },
 }
 </script>

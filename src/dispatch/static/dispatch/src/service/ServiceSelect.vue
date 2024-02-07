@@ -1,31 +1,52 @@
 <template>
-  <v-autocomplete
+  <v-combobox
     v-model="service"
     :items="items"
-    :search-input.sync="search"
+    v-model:search="search"
     :menu-props="{ maxHeight: '400' }"
-    cache-items
-    item-text="name"
-    label="Service"
-    placeholder="Start typing to Search"
+    item-title="name"
+    item-value="id"
+    :label="label"
+    placeholder="Start typing to search"
     return-object
+    :hint="hint"
     :loading="loading"
+    no-filter
   />
 </template>
 
 <script>
-import ServiceApi from "@/service/api"
 import { cloneDeep } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import ServiceApi from "@/service/api"
+
 export default {
   name: "ServiceSelect",
 
   props: {
-    value: {
+    modelValue: {
       type: Object,
-      default: function() {
+      default: function () {
         return {}
-      }
-    }
+      },
+    },
+    label: {
+      type: String,
+      default: function () {
+        return "Service"
+      },
+    },
+    hint: {
+      type: String,
+      default: function () {
+        return "Service to associate"
+      },
+    },
+    project: {
+      type: [Object],
+      default: null,
+    },
   },
 
   data() {
@@ -33,49 +54,65 @@ export default {
       loading: false,
       search: null,
       select: null,
-      items: []
+      items: [],
     }
   },
 
   watch: {
     search(val) {
-      val && val !== this.select && this.querySelections(val)
+      val && val !== this.select && this.fetchData()
     },
     value(val) {
       if (!val) return
       this.items.push(val)
-    }
+    },
   },
 
   computed: {
     service: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
-        this.$emit("input", value)
-      }
-    }
+        this.$emit("update:modelValue", value)
+      },
+    },
   },
 
   methods: {
-    querySelections(v) {
-      this.loading = true
-      // Simulated ajax query
-      ServiceApi.getAll({ q: v }).then(response => {
+    fetchData() {
+      this.error = null
+      this.loading = "error"
+      let filterOptions = {
+        q: this.search,
+        sortBy: ["name"],
+        descending: [false],
+      }
+
+      if (this.project) {
+        filterOptions = {
+          ...filterOptions,
+          filters: {
+            project: [this.project],
+          },
+        }
+        filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+      }
+
+      ServiceApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
         this.loading = false
       })
-    }
+    },
   },
-
-  mounted() {
-    this.error = null
-    this.loading = true
-    ServiceApi.getAll().then(response => {
-      this.items = response.data.items
-      this.loading = false
-    })
-  }
+  created() {
+    this.fetchData()
+    this.$watch(
+      (vm) => [vm.project],
+      () => {
+        this.fetchData()
+      }
+    )
+  },
 }
 </script>

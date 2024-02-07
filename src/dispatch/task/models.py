@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import List, Optional
+from pydantic import Field
 
 from sqlalchemy import (
     Boolean,
@@ -8,38 +8,23 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
-    String,
-    event,
-    Table,
     PrimaryKeyConstraint,
+    String,
+    Table,
+    event,
 )
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql.schema import UniqueConstraint
 from sqlalchemy_utils import TSVectorType
 
-from dispatch.database import Base
-from dispatch.config import INCIDENT_RESOURCE_INCIDENT_TASK
-from dispatch.models import DispatchBase, ResourceMixin, TimeStampMixin
-
-from dispatch.incident.models import IncidentReadNested
-from dispatch.ticket.models import TicketRead
+from dispatch.database.core import Base
+from dispatch.incident.models import IncidentReadMinimal
+from dispatch.models import ResourceBase, ResourceMixin, PrimaryKey, Pagination
 from dispatch.participant.models import ParticipantRead, ParticipantUpdate
+from dispatch.project.models import ProjectRead
 
-
-# SQLAlchemy models
-class TaskStatus(str, Enum):
-    open = "Open"
-    resolved = "Resolved"
-
-
-class TaskSource(str, Enum):
-    incident = "Incident"
-    post_incident_review = "Post Incident Review"
-
-
-class TaskPriority(str, Enum):
-    low = "Low"
-    medium = "Medium"
-    high = "High"
+from .enums import TaskSource, TaskStatus, TaskPriority
 
 
 def default_resolution_time(context):
@@ -52,32 +37,26 @@ def default_resolution_time(context):
     return datetime.utcnow() + timedelta(days=1)
 
 
+# SQLAlchemy models
 assoc_task_assignees = Table(
     "task_assignees",
     Base.metadata,
-    Column("participant_id", Integer, ForeignKey("participant.id")),
-    Column("task_id", Integer, ForeignKey("task.id")),
+    Column("participant_id", Integer, ForeignKey("participant.id", ondelete="CASCADE")),
+    Column("task_id", Integer, ForeignKey("task.id", ondelete="CASCADE")),
     PrimaryKeyConstraint("participant_id", "task_id"),
 )
 
-assoc_task_tickets = Table(
-    "task_tickets",
-    Base.metadata,
-    Column("ticket_id", Integer, ForeignKey("ticket.id")),
-    Column("task_id", Integer, ForeignKey("task.id")),
-    PrimaryKeyConstraint("ticket_id", "task_id"),
-)
 
-
-class Task(Base, ResourceMixin, TimeStampMixin):
+class Task(Base, ResourceMixin):
+    __table_args__ = (UniqueConstraint("resource_id", "incident_id"),)
     id = Column(Integer, primary_key=True)
     resolved_at = Column(DateTime)
     resolve_by = Column(DateTime, default=default_resolution_time)
     last_reminder_at = Column(DateTime)
-    creator_id = Column(Integer, ForeignKey("participant.id"))
-    creator = relationship("Participant", backref="created_tasks", foreign_keys=[creator_id])
-    owner_id = Column(Integer, ForeignKey("participant.id"))
-    owner = relationship("Participant", backref="owned_tasks", foreign_keys=[owner_id])
+    creator_id = Column(Integer, ForeignKey("participant.id", ondelete="CASCADE"))
+    owner_id = Column(Integer, ForeignKey("participant.id", ondelete="CASCADE"))
+    incident_id = Column(Integer, ForeignKey("incident.id", ondelete="CASCADE"))
+
     assignees = relationship(
         "Participant", secondary=assoc_task_assignees, backref="assigned_tasks", lazy="subquery"
     )
@@ -86,9 +65,17 @@ class Task(Base, ResourceMixin, TimeStampMixin):
     priority = Column(String, default=TaskPriority.low)
     status = Column(String, default=TaskStatus.open)
     reminders = Column(Boolean, default=True)
-    incident_id = Column(Integer, ForeignKey("incident.id"))
-    search_vector = Column(TSVectorType("description"))
-    tickets = relationship("Ticket", secondary=assoc_task_tickets, backref="tasks")
+
+    search_vector = Column(
+        TSVectorType(
+            "description",
+            regconfig="pg_catalog.simple",
+        )
+    )
+
+    @hybrid_property
+    def project(self):
+        return self.incident.project
 
     @staticmethod
     def _resolved_at(mapper, connection, target):
@@ -101,41 +88,40 @@ class Task(Base, ResourceMixin, TimeStampMixin):
 
 
 # Pydantic models
-class TaskBase(DispatchBase):
-    creator: Optional[ParticipantRead]
-    owner: Optional[ParticipantRead]
-    created_at: Optional[datetime]
-    resolved_at: Optional[datetime]
-    resolve_by: Optional[datetime]
-    updated_at: Optional[datetime]
-    status: TaskStatus = TaskStatus.open
+class TaskBase(ResourceBase):
     assignees: List[Optional[ParticipantRead]] = []
-    source: Optional[str]
-    priority: Optional[str]
-    description: Optional[str]
-    tickets: Optional[List[TicketRead]] = []
-    weblink: Optional[str]
-    incident: Optional[IncidentReadNested]
-    resource_id: Optional[str]
+    created_at: Optional[datetime]
+    creator: Optional[ParticipantRead]
+    description: Optional[str] = Field(None, nullable=True)
+    incident: IncidentReadMinimal
+    owner: Optional[ParticipantRead]
+    priority: Optional[str] = Field(None, nullable=True)
+    resolve_by: Optional[datetime]
+    resolved_at: Optional[datetime]
+    resource_id: Optional[str] = Field(None, nullable=True)
+    source: Optional[str] = Field(None, nullable=True)
+    status: TaskStatus = TaskStatus.open
+    updated_at: Optional[datetime]
 
 
 class TaskCreate(TaskBase):
-    status: TaskStatus = TaskStatus.open
     assignees: List[Optional[ParticipantUpdate]] = []
-    owner: Optional[ParticipantUpdate]
     creator: Optional[ParticipantUpdate]
-    resource_type: Optional[str] = INCIDENT_RESOURCE_INCIDENT_TASK
+    owner: Optional[ParticipantUpdate]
+    resource_type: Optional[str]
+    status: TaskStatus = TaskStatus.open
 
 
 class TaskUpdate(TaskBase):
-    assignees: List[Optional[ParticipantUpdate]]
+    assignees: List[Optional[ParticipantUpdate]] = []
     owner: Optional[ParticipantUpdate]
+    creator: Optional[ParticipantUpdate]
 
 
 class TaskRead(TaskBase):
-    id: int
+    id: PrimaryKey
+    project: Optional[ProjectRead]
 
 
-class TaskPagination(DispatchBase):
-    total: int
+class TaskPagination(Pagination):
     items: List[TaskRead] = []

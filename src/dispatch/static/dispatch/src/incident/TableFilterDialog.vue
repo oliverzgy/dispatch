@@ -1,48 +1,72 @@
 <template>
   <v-dialog v-model="display" max-width="600px">
-    <template v-slot:activator="{ on }">
-      <v-badge :value="numFilters" bordered overlap :content="numFilters">
-        <v-btn color="secondary" dark v-on="on">Filter Columns</v-btn>
+    <template #activator="{ props }">
+      <v-badge :model-value="!!numFilters" bordered color="info" :content="numFilters">
+        <v-btn color="secondary" v-bind="props"> Filter </v-btn>
       </v-badge>
     </template>
     <v-card>
       <v-card-title>
-        <span class="headline">Column Filters</span>
+        <span class="text-h5">Incident Filters</span>
       </v-card-title>
-      <v-list dense>
-        <!--
-          <v-list-item>
-            <v-list-item-content>
-              <individual-combobox v-model="commander" label="Commanders"></individual-combobox>
-            </v-list-item-content>
-          </v-list-item>
-          <v-list-item>
-            <v-list-item-content>
-              <individual-combobox v-model="reporter" label="Reporters"></individual-combobox>
-            </v-list-item-content>
-          </v-list-item>
-          -->
+      <v-list density="compact">
         <v-list-item>
-          <v-list-item-content>
-            <tag-filter-combobox v-model="tag" label="Tags" />
-          </v-list-item-content>
+          <date-window-input v-model="local_reported_at" label="Reported At" />
         </v-list-item>
         <v-list-item>
-          <v-list-item-content>
-            <incident-type-combobox v-model="incident_type" />
-          </v-list-item-content>
+          <date-window-input v-model="local_closed_at" label="Closed At" />
         </v-list-item>
         <v-list-item>
-          <v-list-item-content>
-            <incident-priority-combobox v-model="incident_priority" />
-          </v-list-item-content>
+          <project-combobox v-model="local_project" label="Projects" />
         </v-list-item>
         <v-list-item>
-          <v-list-item-content>
-            <incident-status-multi-select v-model="status" />
-          </v-list-item-content>
+          <incident-type-combobox v-model="local_incident_type" />
+        </v-list-item>
+        <v-list-item>
+          <incident-severity-combobox v-model="local_incident_severity" />
+        </v-list-item>
+        <v-list-item>
+          <incident-priority-combobox v-model="local_incident_priority" />
+        </v-list-item>
+        <v-list-item>
+          <incident-status-multi-select v-model="local_status" />
+        </v-list-item>
+        <v-list-item>
+          <tag-type-filter-combobox v-model="local_tag_type" label="Tag Types" />
+        </v-list-item>
+        <v-list-item>
+          <tag-filter-auto-complete
+            v-model="local_tag"
+            label="Tags"
+            model="incident"
+            :project="local_project"
+          />
+        </v-list-item>
+        <v-list-item>
+          <v-card class="mx-auto">
+            <v-card-title>Incident Participant</v-card-title>
+            <v-card-subtitle>Show only incidents with this participant</v-card-subtitle>
+            <participant-select
+              class="ml-10 mr-5"
+              v-model="local_participant"
+              label="Participant"
+              hint="Show only incidents with this participant"
+              :project="local_project"
+              clearable
+            />
+            <v-checkbox
+              class="ml-10 mr-5"
+              v-model="local_participant_is_commander"
+              label="And this participant is the Incident Commander"
+              :disabled="local_participant == null"
+            />
+          </v-card>
         </v-list-item>
       </v-list>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn color="info" variant="text" @click="applyFilters()"> Apply Filters </v-btn>
+      </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -50,48 +74,113 @@
 <script>
 import { sum } from "lodash"
 import { mapFields } from "vuex-map-fields"
-import IncidentStatusMultiSelect from "@/incident/IncidentStatusMultiSelect.vue"
-// import IndividualCombobox from "@/individual/IndividualCombobox.vue"
-import TagFilterCombobox from "@/tag/TagFilterCombobox.vue"
-import IncidentTypeCombobox from "@/incident_type/IncidentTypeCombobox.vue"
-import IncidentPriorityCombobox from "@/incident_priority/IncidentPriorityCombobox.vue"
+
+import DateWindowInput from "@/components/DateWindowInput.vue"
+import IncidentPriorityCombobox from "@/incident/priority/IncidentPriorityCombobox.vue"
+import IncidentSeverityCombobox from "@/incident/severity/IncidentSeverityCombobox.vue"
+import IncidentStatusMultiSelect from "@/incident/status/IncidentStatusMultiSelect.vue"
+import IncidentTypeCombobox from "@/incident/type/IncidentTypeCombobox.vue"
+import ProjectCombobox from "@/project/ProjectCombobox.vue"
+import TagFilterAutoComplete from "@/tag/TagPicker.vue"
+import TagTypeFilterCombobox from "@/tag_type/TagTypeFilterCombobox.vue"
+import ParticipantSelect from "@/components/ParticipantSelect.vue"
 
 export default {
   name: "IncidentTableFilterDialog",
 
   components: {
-    // IndividualCombobox,
-    TagFilterCombobox,
-    IncidentTypeCombobox,
+    DateWindowInput,
     IncidentPriorityCombobox,
-    IncidentStatusMultiSelect
+    IncidentSeverityCombobox,
+    IncidentStatusMultiSelect,
+    IncidentTypeCombobox,
+    ProjectCombobox,
+    TagFilterAutoComplete,
+    TagTypeFilterCombobox,
+    ParticipantSelect,
+  },
+
+  props: {
+    projects: {
+      type: Array,
+      default: function () {
+        return []
+      },
+    },
   },
 
   data() {
     return {
-      display: false
+      display: false,
+      local_closed_at: {},
+      local_incident_priority: [],
+      local_incident_severity: [],
+      local_incident_type: [],
+      local_project: this.projects,
+      local_reported_at: {},
+      local_status: [],
+      local_tag: [],
+      local_tag_type: [],
+      local_participant_is_commander: false,
+      local_participant: null,
     }
   },
 
   computed: {
     ...mapFields("incident", [
-      "table.options.filters.commander",
-      "table.options.filters.reporter",
-      "table.options.filters.incident_type",
+      "table.options.filters.closed_at",
       "table.options.filters.incident_priority",
+      "table.options.filters.incident_severity",
+      "table.options.filters.incident_type",
+      "table.options.filters.project",
+      "table.options.filters.reported_at",
       "table.options.filters.status",
-      "table.options.filters.tag"
+      "table.options.filters.tag",
+      "table.options.filters.tag_type",
+      "table.options.filters.commander",
+      "table.options.filters.participant",
     ]),
-    numFilters: function() {
+    numFilters: function () {
       return sum([
-        this.reporter.length,
-        this.commander.length,
-        this.incident_type.length,
         this.incident_priority.length,
+        this.incident_severity.length,
+        this.incident_type.length,
+        this.project.length,
+        this.status.length,
         this.tag.length,
-        this.status.length
+        this.tag_type.length,
+        this.local_participant == null ? 0 : 1,
       ])
-    }
-  }
+    },
+  },
+
+  methods: {
+    applyFilters() {
+      // we set the filter values
+      this.closed_at = this.local_closed_at
+      this.incident_priority = this.local_incident_priority
+      this.incident_severity = this.local_incident_severity
+      this.incident_type = this.local_incident_type
+      this.project = this.local_project
+      this.reported_at = this.local_reported_at
+      this.status = this.local_status
+      this.tag = this.local_tag
+      this.tag_type = this.local_tag_type
+      if (Array.isArray(this.local_participant)) {
+        this.local_participant = this.local_participant[0]
+      }
+      this.participant = this.local_participant
+      if (this.local_participant_is_commander) {
+        this.commander = this.local_participant
+        this.participant = null
+      } else {
+        this.commander = null
+        this.participant = this.local_participant
+      }
+
+      // we close the dialog
+      this.display = false
+    },
+  },
 }
 </script>

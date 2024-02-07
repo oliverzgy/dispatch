@@ -1,27 +1,25 @@
 from typing import Optional
 from jinja2 import Template
 
-from pydantic import validator
-from sqlalchemy import Column, Integer, String
+from pydantic import validator, Field
+from sqlalchemy import Column, Integer, String, ForeignKey
 
-from dispatch.database import Base
-from dispatch.messaging import INCIDENT_CONFERENCE_DESCRIPTION
-from dispatch.models import DispatchBase, ResourceMixin
+from dispatch.database.core import Base
+from dispatch.messaging.strings import INCIDENT_CONFERENCE_DESCRIPTION
+from dispatch.models import ResourceBase, ResourceMixin
 
 
 class Conference(Base, ResourceMixin):
     id = Column(Integer, primary_key=True)
     conference_id = Column(String)
     conference_challenge = Column(String, nullable=False, server_default="N/A")
+    incident_id = Column(Integer, ForeignKey("incident.id", ondelete="CASCADE"))
 
 
 # Pydantic models...
-class ConferenceBase(DispatchBase):
-    resource_id: Optional[str]
-    resource_type: Optional[str]
-    weblink: Optional[str]
-    conference_id: Optional[str]
-    conference_challenge: Optional[str]
+class ConferenceBase(ResourceBase):
+    conference_id: Optional[str] = Field(None, nullable=True)
+    conference_challenge: Optional[str] = Field(None, nullable=True)
 
 
 class ConferenceCreate(ConferenceBase):
@@ -33,7 +31,7 @@ class ConferenceUpdate(ConferenceBase):
 
 
 class ConferenceRead(ConferenceBase):
-    description: Optional[str]
+    description: Optional[str] = Field(None, nullable=True)
 
     @validator("description", pre=True, always=True)
     def set_description(cls, v, values):
@@ -41,7 +39,3 @@ class ConferenceRead(ConferenceBase):
         return Template(INCIDENT_CONFERENCE_DESCRIPTION).render(
             conference_challenge=values["conference_challenge"]
         )
-
-
-class ConferenceNested(ConferenceBase):
-    pass

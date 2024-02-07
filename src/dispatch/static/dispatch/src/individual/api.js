@@ -4,22 +4,22 @@ const resource = "/individuals"
 
 export default {
   getAll(options) {
-    return API.get(`${resource}/`, { params: { ...options } })
+    return API.get(`${resource}`, { params: { ...options } })
   },
 
-  get(termId) {
-    return API.get(`${resource}/${termId}`)
+  get(individualId) {
+    return API.get(`${resource}/${individualId}`)
   },
 
   create(payload) {
-    return API.post(`${resource}/`, payload)
+    return API.post(`${resource}`, payload)
   },
 
-  update(termId, payload) {
-    return API.put(`${resource}/${termId}`, payload)
+  update(individualId, payload) {
+    return API.put(`${resource}/${individualId}`, payload)
   },
 
-  delete(termId) {
-    return API.delete(`${resource}/${termId}`)
-  }
+  delete(individualId) {
+    return API.delete(`${resource}/${individualId}`)
+  },
 }

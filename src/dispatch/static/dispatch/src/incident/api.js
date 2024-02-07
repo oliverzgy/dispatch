@@ -1,35 +1,81 @@
 import API from "@/api"
+//import { result } from "lodash"
 
-const resource = "/incidents"
+const resource = "incidents"
 
 export default {
   getAll(options) {
-    return API.get(`${resource}/`, { params: { ...options } })
+    return API.get(`/${resource}`, {
+      params: { ...options },
+    })
   },
 
   get(incidentId) {
-    return API.get(`${resource}/${incidentId}`)
+    return API.get(`/${resource}/${incidentId}`)
   },
 
-  getMetricForecast(incidentType) {
-    return API.get(`${resource}/metric/forecast/${incidentType}`)
+  getMetricForecast(options) {
+    return API.get(`/${resource}/metric/forecast`, {
+      params: { ...options },
+    })
   },
 
   create(payload) {
-    return API.post(`${resource}/`, payload)
+    return API.post(`/${resource}`, payload)
   },
 
   update(incidentId, payload) {
-    return API.put(`${resource}/${incidentId}`, payload)
+    return API.put(`/${resource}/${incidentId}`, payload)
+  },
+
+  bulkUpdate(incidents, payload) {
+    return Promise.all(
+      incidents.map((incident) => {
+        return this.update(incident.id, { ...incident, ...payload })
+      })
+    )
+  },
+
+  delete(incidentId) {
+    return API.delete(`/${resource}/${incidentId}`)
+  },
+
+  bulkDelete(incidents) {
+    return Promise.all(
+      incidents.map((incident) => {
+        return this.delete(incident.id)
+      })
+    )
   },
 
   join(incidentId, payload) {
-    return API.post(`${resource}/${incidentId}/join`, payload)
+    return API.post(`/${resource}/${incidentId}/join`, payload)
   },
 
-  // TODO: Still not clear to me we'll actually use delete() here, and like
-  // this, for incidents.
-  delete(incidentId) {
-    return API.delete(`${resource}/${incidentId}`)
-  }
+  subscribe(incidentId, payload) {
+    return API.post(`/${resource}/${incidentId}/subscribe`, payload)
+  },
+
+  createReport(incidentId, type, payload) {
+    return API.post(`/${resource}/${incidentId}/report/${type}`, payload)
+  },
+
+  createNewEvent(incidentId, payload) {
+    return API.post(`/${resource}/${incidentId}/event`, payload)
+  },
+
+  updateEvent(incidentId, payload) {
+    return API.patch(`/${resource}/${incidentId}/event`, payload)
+  },
+
+  deleteEvent(incidentId, event_uuid) {
+    return API.delete(`/${resource}/${incidentId}/event/${event_uuid}`)
+  },
+
+  createAllResources(incidentId, payload) {
+    return API.post(`/${resource}/${incidentId}/resources`, payload)
+  },
+  exportTimeline(incidentId, timeline_filters) {
+    return API.post(`/${resource}/${incidentId}/exportTimeline`, timeline_filters)
+  },
 }

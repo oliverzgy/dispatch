@@ -1,143 +1,213 @@
 <template>
-  <v-navigation-drawer app :value="toggleDrawer" clipped>
-    <vue-perfect-scrollbar class="drawer-menu--scroll" :settings="scrollSettings">
-      <v-list dense>
-        <template v-for="item in menus">
-          <!--group with subitems-->
-          <v-list-group
-            v-if="item.items"
-            :key="item.title"
-            :group="item.group"
-            :prepend-icon="item.icon"
-            no-action="no-action"
-          >
-            <v-list-item slot="activator" ripple="ripple">
-              <v-list-item-content>
-                <v-list-item-title>{{ item.title }}</v-list-item-title>
-              </v-list-item-content>
-            </v-list-item>
-            <template v-for="subItem in item.items">
-              <!--sub group-->
-              <v-list-group
-                v-if="subItem.items"
-                :key="subItem.name"
-                :group="subItem.group"
-                sub-group="sub-group"
-              >
-                <v-list-item slot="activator" ripple="ripple">
-                  <v-list-item-content>
-                    <v-list-item-title>{{ subItem.title }}</v-list-item-title>
-                  </v-list-item-content>
-                </v-list-item>
-                <v-list-item
-                  v-for="grand in subItem.children"
-                  :key="grand.name"
-                  to="genChildTarget(item, grand)"
-                  ripple="ripple"
-                >
-                  <v-list-item-content>
-                    <v-list-item-title>{{ grand.title }}</v-list-item-title>
-                  </v-list-item-content>
-                </v-list-item>
-              </v-list-group>
-              <!--child item-->
-              <v-list-item
-                v-else
-                :key="subItem.name"
-                :to="genChildTarget(item, subItem)"
-                :disabled="subItem.disabled"
-                :target="subItem.target"
-                ripple="ripple"
-              >
-                <v-list-item-content>
-                  <v-list-item-title>
-                    <span>{{ subItem.title }}</span>
-                  </v-list-item-title>
-                </v-list-item-content>
-                <v-list-item-action v-if="subItem.action">
-                  <v-icon :class="[subItem.actionClass || 'success--text']">
-                    {{ subItem.action }}
-                  </v-icon>
-                </v-list-item-action>
-              </v-list-item>
-            </template>
-          </v-list-group>
-          <v-subheader v-else-if="item.header" :key="item.name">
-            {{ item.header }}
-          </v-subheader>
-          <v-divider v-else-if="item.divider" :key="item.name" />
-          <!--top-level link-->
+  <v-navigation-drawer permanent :width="mini ? 220 : 440" class="background1" v-if="showChildPane">
+    <v-layout class="h-100">
+      <v-navigation-drawer width="220" permanent :rail="mini">
+        <v-list density="compact" nav>
           <v-list-item
-            v-else
-            :key="item.name"
-            :to="item.href"
-            ripple="ripple"
-            :disabled="item.disabled"
-            :target="item.target"
-            rel="noopener"
+            v-for="(route, index) in routes"
+            :key="index"
+            :to="{ name: route.name }"
+            :prepend-icon="route.meta.icon"
+            :title="route.meta.title"
+          />
+          <v-list-item
+            @click.stop="toggleMiniNav()"
+            :prepend-icon="mini ? 'mdi-chevron-right' : 'mdi-chevron-left'"
+            title="Minimize"
+          />
+        </v-list>
+        <template #append>
+          <v-list-item
+            nav
+            class="ma-2"
+            rounded
+            variant="flat"
+            base-color="error"
+            :to="{ name: 'report' }"
           >
-            <v-list-item-action v-if="item.icon">
-              <v-icon>{{ item.icon }}</v-icon>
-            </v-list-item-action>
-            <v-list-item-content>
-              <v-list-item-title>{{ item.title }}</v-list-item-title>
-            </v-list-item-content>
-            <v-list-item-action v-if="item.subAction">
-              <v-icon class="success--text">
-                {{ item.subAction }}
-              </v-icon>
-            </v-list-item-action>
+            <template #prepend>
+              <v-icon color="white">mdi-fire</v-icon>
+            </template>
+            <v-list-item-title class="text-uppercase text-body-2">
+              Report incident
+            </v-list-item-title>
           </v-list-item>
         </template>
-      </v-list>
-    </vue-perfect-scrollbar>
+      </v-navigation-drawer>
+      <v-navigation-drawer width="220">
+        <v-list density="compact" nav>
+          <v-list-item>
+            <v-text-field
+              v-if="showFilter"
+              v-model="q"
+              append-inner-icon="mdi-magnify"
+              label="Filter"
+              single-line
+              hide-details
+            />
+          </v-list-item>
+          <span v-for="(subRoutes, group, idx) in children" :key="group">
+            <v-list-subheader class="text-capitalize">
+              {{ group }}
+            </v-list-subheader>
+            <v-list-item
+              v-for="(route, subIndex) in subRoutes"
+              :key="subIndex"
+              :to="{ name: route.name, query: childrenQueryParams }"
+            >
+              <v-list-item-title>{{ route.meta.title }}</v-list-item-title>
+            </v-list-item>
+            <v-divider v-if="idx != Object.keys(children).length - 1" />
+          </span>
+        </v-list>
+      </v-navigation-drawer>
+    </v-layout>
+  </v-navigation-drawer>
+  <v-navigation-drawer permanent width="220" :rail="mini" v-else>
+    <v-list density="compact" nav>
+      <v-list-item
+        v-for="(route, index) in routes"
+        :key="index"
+        :to="{ name: route.name }"
+        :prepend-icon="route.meta.icon"
+        :title="route.meta.title"
+      >
+        <v-tooltip v-if="mini" activator="parent" location="right" :text="route.meta.title" />
+      </v-list-item>
+      <v-list-item
+        @click.stop="toggleMiniNav()"
+        :prepend-icon="mini ? 'mdi-chevron-right' : 'mdi-chevron-left'"
+        title="Minimize"
+      >
+        <v-tooltip v-if="mini" activator="parent" location="right" text="Minimize" />
+      </v-list-item>
+    </v-list>
+    <template #append>
+      <v-list-item
+        nav
+        class="ma-2"
+        rounded
+        variant="flat"
+        base-color="error"
+        :to="{ name: 'report' }"
+      >
+        <template #prepend>
+          <v-icon color="white">mdi-fire</v-icon>
+        </template>
+        <v-list-item-title class="text-uppercase text-body-2">Report incident</v-list-item-title>
+        <v-tooltip
+          v-if="mini"
+          activator="parent"
+          location="right"
+          content-class="bg-error"
+          text="Report incident"
+        />
+      </v-list-item>
+    </template>
   </v-navigation-drawer>
 </template>
 <script>
-import menu from "@/api/menu"
+import { groupBy, filter } from "lodash"
 import { mapState } from "vuex"
-import VuePerfectScrollbar from "vue-perfect-scrollbar"
+
 export default {
   name: "AppDrawer",
-  components: {
-    VuePerfectScrollbar
-  },
   props: {
     expanded: {
       type: Boolean,
-      default: true
+      default: true,
     },
     drawWidth: {
       type: [Number, String],
-      default: "260"
-    }
+      default: "220",
+    },
   },
-  data() {
-    return {
-      menus: menu,
-      scrollSettings: {
-        maxScrollbarLength: 160
+
+  data: () => ({
+    mini: false,
+    q: "",
+    showFilter: false,
+  }),
+
+  created() {
+    this.mini = JSON.parse(localStorage.getItem("mini_nav"))
+    this.$watch(
+      () => this.$router.currentRoute.value.query.project,
+      (val) => {
+        this.showFilter = val
+        if (!val) this.q = ""
       }
-    }
+    )
   },
+
+  methods: {
+    toggleMiniNav() {
+      this.mini = !this.mini
+      localStorage.setItem("mini_nav", this.mini)
+    },
+  },
+
   computed: {
     computeLogo() {
       return "/static/m.png"
     },
-    ...mapState("app", ["toggleDrawer"])
-  },
-  created() {},
+    routes() {
+      return this.$router.options.routes.filter((route) =>
+        "menu" in route.meta ? route.meta.menu : false
+      )
+    },
+    childrenQueryParams() {
+      return this.$router.currentRoute.value.query
+    },
+    showChildPane() {
+      if (Object.keys(this.children).length) {
+        return Object.values(this.children)[0].length || this.q.length
+      }
+      if (this.q.length) {
+        return true
+      }
+      return false
+    },
+    children() {
+      let children = this.$router.options.routes.filter(
+        (route) => route.path == this.$route.matched[0].path
+      )[0].children
 
-  methods: {
-    genChildTarget(item, subItem) {
-      if (subItem.href) return
-      if (subItem.component) {
-        return {
-          name: subItem.component
+      // Filter sub-menu children
+      let menuGroups = groupBy(children, function (child) {
+        return child.meta.subMenu
+      })
+
+      // determine which submenu to display
+      children = menuGroups[this.$route.meta.subMenu]
+
+      // Filter children without groups
+      children = filter(children, function (child) {
+        return child.meta.group
+      })
+
+      // Filter children if we have a filter string
+      if (this.$router.currentRoute.value.query.project) {
+        let q = this.q
+        if (q.length) {
+          children = children.filter(function (item) {
+            let metadata = item.meta.group.toLowerCase() + item.meta.title.toLowerCase()
+
+            if (item.meta.subMenu) {
+              metadata = metadata + item.meta.subMenu.toLowerCase()
+            }
+            return metadata.includes(q.toLowerCase())
+          })
         }
       }
-      return { name: `${item.group}/${subItem.name}` }
-    }
-  }
+
+      children = groupBy(children, function (child) {
+        return child.meta.group
+      })
+
+      return children
+    },
+    ...mapState("app", ["toggleDrawer"]),
+  },
 }
 </script>

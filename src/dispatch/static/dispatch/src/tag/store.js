@@ -1,63 +1,70 @@
-import TagApi from "@/tag/api"
-
 import { getField, updateField } from "vuex-map-fields"
 import { debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import TagApi from "@/tag/api"
 
 const getDefaultSelectedState = () => {
   return {
     name: null,
-    source: null,
-    type: null,
+    source: "dispatch",
+    tag_type: null,
     uri: null,
     id: null,
-    description: null,
+    description: "Generic tag",
+    external_id: null,
+    project: null,
     created_at: null,
     discoverable: null,
     updated_at: null,
-    loading: false
+    loading: false,
   }
 }
 
 const state = {
   selected: {
-    ...getDefaultSelectedState()
+    ...getDefaultSelectedState(),
   },
   dialogs: {
     showCreateEdit: false,
-    showRemove: false
+    showRemove: false,
   },
   table: {
     rows: {
       items: [],
-      total: null
+      total: null,
     },
     options: {
       q: "",
       page: 1,
-      itemsPerPage: 10,
+      itemsPerPage: 25,
       sortBy: ["name"],
-      descending: [false]
+      descending: [false],
+      filters: {
+        project: [],
+      },
     },
-    loading: false
-  }
+    loading: false,
+  },
 }
 
 const getters = {
-  getField
+  getField,
 }
 
 const actions = {
   getAll: debounce(({ commit, state }) => {
-    commit("SET_TABLE_LOADING", true)
-    return TagApi.getAll(state.table.options)
-      .then(response => {
+    commit("SET_TABLE_LOADING", "primary")
+    let params = SearchUtils.createParametersFromTableOptions({ ...state.table.options }, "Tag")
+    return TagApi.getAll(params)
+      .then((response) => {
         commit("SET_TABLE_LOADING", false)
         commit("SET_TABLE_ROWS", response.data)
       })
       .catch(() => {
         commit("SET_TABLE_LOADING", false)
       })
-  }, 200),
+  }, 500),
   createEditShow({ commit }, Tag) {
     commit("SET_DIALOG_CREATE_EDIT", true)
     if (Tag) {
@@ -77,66 +84,59 @@ const actions = {
     commit("RESET_SELECTED")
   },
   save({ commit, dispatch }) {
+    commit("SET_SELECTED_LOADING", true)
     if (!state.selected.id) {
       return TagApi.create(state.selected)
         .then(() => {
+          commit("SET_SELECTED_LOADING", false)
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Tag created successfully." }, { root: true })
-        })
-        .catch(err => {
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Tag not created. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Tag created successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     } else {
       return TagApi.update(state.selected.id, state.selected)
         .then(() => {
+          commit("SET_SELECTED_LOADING", false)
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Tag updated successfully." }, { root: true })
-        })
-        .catch(err => {
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Tag not updated. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Tag updated successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     }
   },
   remove({ commit, dispatch }) {
-    return TagApi.delete(state.selected.id)
-      .then(function() {
-        dispatch("closeRemove")
-        dispatch("getAll")
-        commit("app/SET_SNACKBAR", { text: "Tag deleted successfully." }, { root: true })
-      })
-      .catch(err => {
-        commit(
-          "app/SET_SNACKBAR",
-          {
-            text: "Tag not deleted. Reason: " + err.response.data.detail,
-            color: "red"
-          },
-          { root: true }
-        )
-      })
-  }
+    return TagApi.delete(state.selected.id).then(function () {
+      dispatch("closeRemove")
+      dispatch("getAll")
+      commit(
+        "notification_backend/addBeNotification",
+        { text: "Tag deleted successfully.", type: "success" },
+        { root: true }
+      )
+    })
+  },
 }
 
 const mutations = {
   updateField,
   SET_SELECTED(state, value) {
     state.selected = Object.assign(state.selected, value)
+  },
+  SET_SELECTED_LOADING(state, value) {
+    state.selected.loading = value
   },
   SET_TABLE_LOADING(state, value) {
     state.table.loading = value
@@ -151,8 +151,11 @@ const mutations = {
     state.dialogs.showRemove = value
   },
   RESET_SELECTED(state) {
-    state.selected = Object.assign(state.selected, getDefaultSelectedState())
-  }
+    // do not reset project
+    let project = state.selected.project
+    state.selected = { ...getDefaultSelectedState() }
+    state.selected.project = project
+  },
 }
 
 export default {
@@ -160,5 +163,5 @@ export default {
   state,
   getters,
   actions,
-  mutations
+  mutations,
 }

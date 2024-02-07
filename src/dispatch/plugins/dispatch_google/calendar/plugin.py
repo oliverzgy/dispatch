@@ -19,6 +19,7 @@ from dispatch.decorators import apply, counter, timer
 from dispatch.plugins.bases import ConferencePlugin
 from dispatch.plugins.dispatch_google import calendar as google_calendar_plugin
 from dispatch.plugins.dispatch_google.common import get_service
+from dispatch.plugins.dispatch_google.config import GoogleConfiguration
 
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def make_call(client: Any, func: Any, delay: int = None, propagate_errors: bool 
 
         return data
     except HttpError:
-        raise TryAgain
+        raise TryAgain from None
 
 
 def get_event(client: Any, event_id: str):
@@ -75,11 +76,14 @@ def create_event(
     name: str,
     description: str = None,
     title: str = None,
-    participants: List[str] = [],
+    participants: List[str] = None,
     start_time: str = None,
     duration: int = 60000,  # duration in mins ~6 weeks
 ):
-    participants = [{"email": x} for x in participants]
+    if participants:
+        participants = [{"email": x} for x in participants]
+    else:
+        participants = []
 
     request_id = str(uuid.uuid4())
     body = {
@@ -128,14 +132,19 @@ class GoogleCalendarConferencePlugin(ConferencePlugin):
 
     def __init__(self):
         self.scopes = ["https://www.googleapis.com/auth/calendar"]
+        self.configuration_schema = GoogleConfiguration
 
     def create(
-        self, name: str, description: str = None, title: str = None, participants: List[str] = []
+        self, name: str, description: str = None, title: str = None, participants: List[str] = None
     ):
         """Create a new event."""
-        client = get_service("calendar", "v3", self.scopes)
+        client = get_service(self.configuration, "calendar", "v3", self.scopes)
         conference = create_event(
-            client, name, description=description, participants=participants, title=title
+            client,
+            name,
+            description=description,
+            participants=participants,
+            title=title,
         )
 
         meet_url = ""
@@ -147,15 +156,15 @@ class GoogleCalendarConferencePlugin(ConferencePlugin):
 
     def delete(self, event_id: str):
         """Deletes an existing event."""
-        client = get_service("calendar", "v3", self.scopes)
+        client = get_service(self.configuration, "calendar", "v3", self.scopes)
         return delete_event(client, event_id)
 
     def add_participant(self, event_id: str, participant: str):
         """Adds a new participant to event."""
-        client = get_service("calendar", "v3", self.scopes)
+        client = get_service(self.configuration, "calendar", "v3", self.scopes)
         return add_participant(client, event_id, participant)
 
     def remove_participant(self, event_id: str, participant: str):
         """Removes a participant from event."""
-        client = get_service("calendar", "v3", self.scopes)
+        client = get_service(self.configuration, "calendar", "v3", self.scopes)
         return remove_participant(client, event_id, participant)

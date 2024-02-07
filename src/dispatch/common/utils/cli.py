@@ -14,7 +14,7 @@ def install_plugin_events(api):
     """Adds plugin endpoints to the event router."""
     for plugin in plugins.all():
         if plugin.events:
-            api.include_router(plugin.events, prefix="/events", tags=["events"])
+            api.include_router(plugin.events, prefix="/{organization}/events", tags=["events"])
 
 
 def install_plugins():
@@ -33,12 +33,8 @@ def install_plugins():
             logger.error(
                 "Something went wrong with creating plugin rows, is the database setup correctly?"
             )
+            logger.error(f"Failed to load plugin {ep.name}:{traceback.format_exc()}")
         except KeyError as e:
             logger.info(f"Failed to load plugin {ep.name} due to missing configuration items. {e}")
         except Exception:
             logger.error(f"Failed to load plugin {ep.name}:{traceback.format_exc()}")
-
-
-def get_plugin_properties(json_schema):
-    for _, v in json_schema["definitions"].items():
-        return v["properties"]

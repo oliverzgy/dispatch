@@ -2,52 +2,63 @@
   <v-autocomplete
     v-model="assignee"
     :items="items"
-    :search-input.sync="search"
+    v-model:search="search"
     :menu-props="{ maxHeight: '400' }"
     hide-selected
     :label="label"
-    item-text="name"
+    item-title="name"
     multiple
-    close
+    closable-chips
     chips
     clearable
     return-object
     placeholder="Start typing to search"
-    cache-items
+    no-filter
+    @update:model-value="handleClear"
     :loading="loading"
   >
-    <template v-slot:no-data>
-      <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No individuals matching "
-            <strong>{{ search }}</strong
-            >".
-          </v-list-item-title>
-        </v-list-item-content>
+    <template #no-data>
+      <v-list-item v-if="search">
+        <v-list-item-title>
+          No individuals matching "
+          <strong>{{ search }}</strong
+          >".
+        </v-list-item-title>
       </v-list-item>
+    </template>
+    <template #item="{ props, item }">
+      <v-list-item v-bind="props" :subtitle="item.raw.email" />
+    </template>
+    <template #chip="data">
+      <v-chip v-bind="data.props" pill>
+        <template #prepend>
+          <v-avatar color="teal" start> {{ initials(data.item.raw.name) }} </v-avatar>
+        </template>
+        {{ data.item.raw.name }}
+      </v-chip>
     </template>
   </v-autocomplete>
 </template>
 
 <script>
 import IndividualApi from "@/individual/api"
+import { initials } from "@/filters"
 import { map } from "lodash"
 export default {
   name: "AssigneeComboBox",
   props: {
-    value: {
+    modelValue: {
       type: Array,
-      default: function() {
+      default: function () {
         return []
-      }
+      },
     },
     label: {
       type: String,
-      default: function() {
+      default: function () {
         return "Assignee"
-      }
-    }
+      },
+    },
   },
 
   data() {
@@ -55,27 +66,31 @@ export default {
       loading: false,
       items: [],
       select: null,
-      search: null
+      search: null,
     }
+  },
+
+  setup() {
+    return { initials }
   },
 
   computed: {
     assignee: {
       get() {
-        return map(this.value, function(item) {
+        return map(this.modelValue, function (item) {
           return item["individual"]
         })
       },
       set(value) {
-        let wrapped = map(value, function(item) {
+        let wrapped = map(value, function (item) {
           if (!("individual" in item)) {
             return { individual: item }
           }
           return item
         })
-        this.$emit("input", wrapped)
-      }
-    }
+        this.$emit("update:modelValue", wrapped)
+      },
+    },
   },
 
   watch: {
@@ -86,31 +101,34 @@ export default {
       if (!val) return
       this.items.push.apply(
         this.items,
-        map(val, function(item) {
+        map(val, function (item) {
           return item["individual"]
         })
       )
-    }
+    },
   },
 
   methods: {
     querySelections(v) {
-      this.loading = true
+      this.loading = "error"
       // Simulated ajax query
-      IndividualApi.getAll({ q: v }).then(response => {
+      IndividualApi.getAll({ q: v }).then((response) => {
         this.items = response.data.items
         this.loading = false
       })
-    }
+    },
+    handleClear() {
+      this.search = null
+    },
   },
 
-  mounted() {
+  created() {
     this.error = null
-    this.loading = true
-    IndividualApi.getAll().then(response => {
+    this.loading = "error"
+    IndividualApi.getAll().then((response) => {
       this.items = response.data.items
       this.loading = false
     })
-  }
+  },
 }
 </script>

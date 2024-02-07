@@ -1,23 +1,23 @@
-from pydantic import validator
+from pydantic import validator, Field
 
 from typing import Optional
 
-from sqlalchemy import Column, Integer
+from sqlalchemy import Column, Integer, ForeignKey
 
-from dispatch.database import Base
-from dispatch.messaging import INCIDENT_STORAGE_DESCRIPTION
-from dispatch.models import DispatchBase, ResourceMixin
+from dispatch.database.core import Base
+from dispatch.messaging.strings import STORAGE_DESCRIPTION
+from dispatch.models import ResourceBase, ResourceMixin
 
 
 class Storage(Base, ResourceMixin):
     id = Column(Integer, primary_key=True)
+    incident_id = Column(Integer, ForeignKey("incident.id", ondelete="CASCADE"))
+    case_id = Column(Integer, ForeignKey("case.id", ondelete="CASCADE"))
 
 
 # Pydantic models...
-class StorageBase(DispatchBase):
-    resource_id: Optional[str]
-    resource_type: Optional[str]
-    weblink: Optional[str]
+class StorageBase(ResourceBase):
+    pass
 
 
 class StorageCreate(StorageBase):
@@ -29,13 +29,9 @@ class StorageUpdate(StorageBase):
 
 
 class StorageRead(StorageBase):
-    description: Optional[str]
+    description: Optional[str] = Field(None, nullable=True)
 
     @validator("description", pre=True, always=True)
     def set_description(cls, v):
         """Sets the description"""
-        return INCIDENT_STORAGE_DESCRIPTION
-
-
-class StorageNested(StorageBase):
-    pass
+        return STORAGE_DESCRIPTION

@@ -1,14 +1,12 @@
 <template>
   <div v-if="items.length">
     <new-edit-sheet />
-    <v-divider></v-divider>
+    <v-divider />
     <v-list>
-      <v-list-group prepend-icon="label" no-action color="primary">
-        <template v-slot:activator>
-          <v-list-item>
-            <v-list-item-content>
-              <v-list-item-title>Tags ({{ items.length }})</v-list-item-title>
-            </v-list-item-content>
+      <v-list-group prepend-icon="mdi-label" color="info">
+        <template #activator="{ props }">
+          <v-list-item v-bind="props">
+            <v-list-item-title>Tags ({{ items.length }})</v-list-item-title>
           </v-list-item>
         </template>
         <v-list-item
@@ -16,10 +14,8 @@
           :key="item.content.id"
           @click="createEditShow(item.content)"
         >
-          <v-list-item-content>
-            <v-list-item-title v-text="item.content.name"></v-list-item-title>
-            <v-list-item-subtitle>Name</v-list-item-subtitle>
-          </v-list-item-content>
+          <v-list-item-title>{{ item.content.name }}</v-list-item-title>
+          <v-list-item-subtitle>Name</v-list-item-subtitle>
         </v-list-item>
       </v-list-group>
     </v-list>
@@ -29,22 +25,23 @@
 import { mapActions } from "vuex"
 
 import NewEditSheet from "@/tag/NewEditSheet.vue"
+
 export default {
   name: "TagList",
 
   components: {
-    NewEditSheet
+    NewEditSheet,
   },
 
   props: {
     items: {
       default: null,
-      type: Array
-    }
+      type: Array,
+    },
   },
 
   methods: {
-    ...mapActions("tag", ["createEditShow"])
-  }
+    ...mapActions("tag", ["createEditShow"]),
+  },
 }
 </script>

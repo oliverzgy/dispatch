@@ -1,59 +1,70 @@
-import TeamApi from "@/team/api"
-
 import { getField, updateField } from "vuex-map-fields"
 import { debounce } from "lodash"
+
+import TeamApi from "@/team/api"
+import SearchUtils from "@/search/utils"
 
 const getDefaultSelectedState = () => {
   return {
     name: null,
-    terms: [],
-    incident_priorities: [],
-    incident_types: [],
+    filters: [],
     id: null,
     created_at: null,
     updated_at: null,
     company: null,
+    project: null,
     email: null,
-    loading: false
+    evergreen: null,
+    evergreen_owner: null,
+    evergreen_reminder_interval: null,
+    loading: false,
   }
 }
 
 const state = {
   selected: {
-    ...getDefaultSelectedState()
+    ...getDefaultSelectedState(),
   },
   dialogs: {
     showCreateEdit: false,
-    showRemove: false
+    showRemove: false,
   },
   table: {
     rows: {
       items: [],
-      total: null
+      total: null,
     },
     options: {
       q: "",
       page: 1,
-      itemsPerPage: 10,
+      itemsPerPage: 25,
       sortBy: ["name"],
-      descending: [true]
+      descending: [true],
+      filters: {
+        project: [],
+      },
     },
-    loading: false
-  }
+    loading: false,
+  },
 }
 
 const getters = {
-  getField
+  getField,
 }
 
 const actions = {
   getAll: debounce(({ commit, state }) => {
-    commit("SET_TABLE_LOADING", true)
-    return TeamApi.getAll(state.table.options).then(response => {
-      commit("SET_TABLE_LOADING", false)
-      commit("SET_TABLE_ROWS", response.data)
-    })
-  }, 200),
+    commit("SET_TABLE_LOADING", "primary")
+    let params = SearchUtils.createParametersFromTableOptions({ ...state.table.options }, "Team")
+    return TeamApi.getAll(params)
+      .then((response) => {
+        commit("SET_TABLE_LOADING", false)
+        commit("SET_TABLE_ROWS", response.data)
+      })
+      .catch(() => {
+        commit("SET_TABLE_LOADING", false)
+      })
+  }, 500),
   createEditShow({ commit }, team) {
     commit("SET_DIALOG_CREATE_EDIT", true)
     if (team) {
@@ -73,66 +84,59 @@ const actions = {
     commit("RESET_SELECTED")
   },
   save({ commit, dispatch }) {
+    commit("SET_SELECTED_LOADING", true)
     if (!state.selected.id) {
       return TeamApi.create(state.selected)
         .then(() => {
+          commit("SET_SELECTED_LOADING", false)
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Team created successfully." }, { root: true })
-        })
-        .catch(err => {
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Team not created. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Team created successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     } else {
       return TeamApi.update(state.selected.id, state.selected)
         .then(() => {
+          commit("SET_SELECTED_LOADING", false)
           dispatch("closeCreateEdit")
           dispatch("getAll")
-          commit("app/SET_SNACKBAR", { text: "Team updated successfully." }, { root: true })
-        })
-        .catch(err => {
           commit(
-            "app/SET_SNACKBAR",
-            {
-              text: "Team not updated. Reason: " + err.response.data.detail,
-              color: "red"
-            },
+            "notification_backend/addBeNotification",
+            { text: "Team updated successfully.", type: "success" },
             { root: true }
           )
+        })
+        .catch(() => {
+          commit("SET_SELECTED_LOADING", false)
         })
     }
   },
   remove({ commit, dispatch }) {
-    return TeamApi.delete(state.selected.id)
-      .then(function() {
-        dispatch("closeRemove")
-        dispatch("getAll")
-        commit("app/SET_SNACKBAR", { text: "Team deleted successfully." }, { root: true })
-      })
-      .catch(err => {
-        commit(
-          "app/SET_SNACKBAR",
-          {
-            text: "Team not deleted. Reason: " + err.response.data.detail,
-            color: "red"
-          },
-          { root: true }
-        )
-      })
-  }
+    return TeamApi.delete(state.selected.id).then(function () {
+      dispatch("closeRemove")
+      dispatch("getAll")
+      commit(
+        "notification_backend/addBeNotification",
+        { text: "Team deleted successfully.", type: "success" },
+        { root: true }
+      )
+    })
+  },
 }
 
 const mutations = {
   updateField,
   SET_SELECTED(state, value) {
     state.selected = Object.assign(state.selected, value)
+  },
+  SET_SELECTED_LOADING(state, value) {
+    state.selected.loading = value
   },
   SET_TABLE_LOADING(state, value) {
     state.table.loading = value
@@ -147,8 +151,11 @@ const mutations = {
     state.dialogs.showRemove = value
   },
   RESET_SELECTED(state) {
-    state.selected = Object.assign(state.selected, getDefaultSelectedState())
-  }
+    // do not reset project
+    let project = state.selected.project
+    state.selected = { ...getDefaultSelectedState() }
+    state.selected.project = project
+  },
 }
 
 export default {
@@ -156,5 +163,5 @@ export default {
   state,
   getters,
   actions,
-  mutations
+  mutations,
 }

@@ -1,41 +1,46 @@
 <template>
-  <ValidationProvider name="document" immediate>
-    <v-autocomplete
-      v-model="document"
-      :items="items"
-      :search-input.sync="search"
-      :menu-props="{ maxHeight: '400' }"
-      cache-items
-      slot-scope="{ errors, valid }"
-      :error-messages="errors"
-      :success="valid"
-      item-text="name"
-      label="Document"
-      placeholder="Start typing to search"
-      return-object
-      :loading="loading"
-    />
-  </ValidationProvider>
+  <v-autocomplete
+    v-model="document"
+    :items="items"
+    v-model:search="search"
+    :menu-props="{ maxHeight: '400' }"
+    item-title="name"
+    label="Document"
+    placeholder="Start typing to search"
+    return-object
+    :loading="loading"
+    no-filter
+    name="document"
+  >
+    <template #append>
+      <v-btn icon variant="text" @click="createEditShow({})">
+        <v-icon>mdi-plus</v-icon>
+      </v-btn>
+    </template>
+  </v-autocomplete>
 </template>
 
 <script>
-import DocumentApi from "@/document/api"
+import { mapActions } from "vuex"
 import { cloneDeep } from "lodash"
-import { ValidationProvider } from "vee-validate"
+
+import SearchUtils from "@/search/utils"
+import DocumentApi from "@/document/api"
+
 export default {
   name: "DocumentSelect",
 
   props: {
-    value: {
+    modelValue: {
       type: Object,
-      default: function() {
+      default: function () {
         return {}
-      }
-    }
-  },
-
-  components: {
-    ValidationProvider
+      },
+    },
+    project: {
+      type: [Object],
+      default: null,
+    },
   },
 
   data() {
@@ -43,49 +48,70 @@ export default {
       loading: false,
       search: null,
       select: null,
-      items: []
+      items: [],
     }
   },
 
   watch: {
     search(val) {
-      val && val !== this.select && this.querySelections(val)
+      val && val !== this.select && this.fetchData()
     },
     value(val) {
       if (!val) return
       this.items.push(val)
-    }
+    },
   },
 
   computed: {
     document: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
-        this.$emit("input", value)
-      }
-    }
+        this.$emit("update:modelValue", value)
+      },
+    },
   },
 
   methods: {
-    querySelections(v) {
-      this.loading = true
-      // Simulated ajax query
-      DocumentApi.getAll({ q: v }).then(response => {
+    ...mapActions("document", ["createEditShow"]),
+    addItem(value) {
+      this.document = value
+      this.items.push(value)
+    },
+    fetchData() {
+      this.error = null
+      this.loading = "error"
+      let filterOptions = {
+        sortBy: ["name"],
+        descending: [false],
+      }
+
+      if (this.project) {
+        filterOptions = {
+          ...filterOptions,
+          filters: {
+            project: [this.project],
+          },
+        }
+        filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+      }
+
+      DocumentApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
         this.loading = false
       })
-    }
+    },
   },
 
-  mounted() {
-    this.error = null
-    this.loading = true
-    DocumentApi.getAll().then(response => {
-      this.items = response.data.items
-      this.loading = false
-    })
-  }
+  created() {
+    this.fetchData()
+    this.$watch(
+      (vm) => [vm.project],
+      () => {
+        this.fetchData()
+      }
+    )
+  },
 }
 </script>

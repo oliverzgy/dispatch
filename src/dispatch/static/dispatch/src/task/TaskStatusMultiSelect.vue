@@ -15,33 +15,40 @@ import { cloneDeep } from "lodash"
 export default {
   name: "TaskStatusMultiSelect",
   props: {
-    value: {
-      priority: Array,
-      default: function() {
+    modelValue: {
+      type: Array,
+      default: function () {
         return []
-      }
+      },
     },
     label: {
-      priority: String,
-      default: function() {
+      type: String,
+      default: function () {
         return "Status"
-      }
-    }
+      },
+    },
+    project: {
+      type: String,
+      required: false,
+      default: function () {
+        return ""
+      },
+    },
   },
   data() {
     return {
-      items: ["Open", "Resolved"]
+      items: ["Open", "Resolved"],
     }
   },
   computed: {
     taskStatuses: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
-        this.$emit("input", value)
-      }
-    }
-  }
+        this.$emit("update:modelValue", value)
+      },
+    },
+  },
 }
 </script>

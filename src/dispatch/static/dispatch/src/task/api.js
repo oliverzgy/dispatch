@@ -4,7 +4,7 @@ const resource = "/tasks"
 
 export default {
   getAll(options) {
-    return API.get(`${resource}/`, { params: { ...options } })
+    return API.get(`${resource}`, { params: { ...options } })
   },
 
   get(taskId) {
@@ -12,14 +12,22 @@ export default {
   },
 
   create(payload) {
-    return API.post(`${resource}/`, payload)
+    return API.post(`${resource}`, payload)
   },
 
   update(taskId, payload) {
     return API.put(`${resource}/${taskId}`, payload)
   },
 
+  bulkUpdate(tasks, payload) {
+    return Promise.all(
+      tasks.map((task) => {
+        return this.update(task.id, { ...task, ...payload })
+      })
+    )
+  },
+
   delete(taskId) {
     return API.delete(`${resource}/${taskId}`)
-  }
+  },
 }

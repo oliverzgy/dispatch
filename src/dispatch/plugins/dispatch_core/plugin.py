@@ -11,35 +11,41 @@ import logging
 import requests
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
-
 from jose import JWTError, jwt
 from jose.exceptions import JWKError
-from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.requests import Request
+from starlette.status import HTTP_401_UNAUTHORIZED
 
-from dispatch.config import DISPATCH_UI_URL
-from dispatch.incident_priority.models import IncidentPriority
-from dispatch.incident_type.models import IncidentType
-from dispatch.individual import service as individual_service
-from dispatch.plugins import dispatch_core as dispatch_plugin
-from dispatch.plugin import service as plugin_service
-from dispatch.plugins.bases import (
-    ParticipantPlugin,
-    DocumentResolverPlugin,
-    AuthenticationProviderPlugin,
-    TicketPlugin,
-    ContactPlugin,
-)
-
-from dispatch.route import service as route_service
-from dispatch.route.models import RouteRequest
-
+from dispatch.case import service as case_service
 from dispatch.config import (
+    DISPATCH_AUTHENTICATION_PROVIDER_HEADER_NAME,
     DISPATCH_AUTHENTICATION_PROVIDER_PKCE_JWKS,
-    DISPATCH_JWT_SECRET,
     DISPATCH_JWT_AUDIENCE,
     DISPATCH_JWT_EMAIL_OVERRIDE,
+    DISPATCH_JWT_SECRET,
+    DISPATCH_PKCE_DONT_VERIFY_AT_HASH,
+    DISPATCH_UI_URL,
 )
+from dispatch.database.core import Base
+from dispatch.document.models import Document, DocumentRead
+from dispatch.incident import service as incident_service
+from dispatch.incident.models import Incident
+from dispatch.individual import service as individual_service
+from dispatch.individual.models import IndividualContact, IndividualContactRead
+from dispatch.plugin import service as plugin_service
+from dispatch.plugins import dispatch_core as dispatch_plugin
+from dispatch.plugins.bases import (
+    AuthenticationProviderPlugin,
+    ContactPlugin,
+    DocumentResolverPlugin,
+    ParticipantPlugin,
+    TicketPlugin,
+)
+from dispatch.route import service as route_service
+from dispatch.service import service as service_service
+from dispatch.service.models import Service, ServiceRead
+from dispatch.team import service as team_service
+from dispatch.team.models import TeamContact, TeamContactRead
 
 log = logging.getLogger(__name__)
 
@@ -66,8 +72,11 @@ class BasicAuthProviderPlugin(AuthenticationProviderPlugin):
 
         try:
             data = jwt.decode(token, DISPATCH_JWT_SECRET)
-        except (JWKError, JWTError) as e:
-            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail=str(e))
+        except (JWKError, JWTError):
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail=[{"msg": "Could not validate credentials"}],
+            ) from None
         return data["email"]
 
 
@@ -82,7 +91,7 @@ class PKCEAuthProviderPlugin(AuthenticationProviderPlugin):
 
     def get_current_user(self, request: Request, **kwargs):
         credentials_exception = HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED, detail="Could not validate credentials"
+            status_code=HTTP_401_UNAUTHORIZED, detail=[{"msg": "Could not validate credentials"}]
         )
 
         authorization: str = request.headers.get(
@@ -104,13 +113,17 @@ class PKCEAuthProviderPlugin(AuthenticationProviderPlugin):
                 key = potential_key
 
         try:
+            jwt_opts = {}
+            if DISPATCH_PKCE_DONT_VERIFY_AT_HASH:
+                jwt_opts = {"verify_at_hash": False}
             # If DISPATCH_JWT_AUDIENCE is defined, the we must include audience in the decode
             if DISPATCH_JWT_AUDIENCE:
-                data = jwt.decode(token, key, audience=DISPATCH_JWT_AUDIENCE)
+                data = jwt.decode(token, key, audience=DISPATCH_JWT_AUDIENCE, options=jwt_opts)
             else:
-                data = jwt.decode(token, key)
-        except JWTError:
-            raise credentials_exception
+                data = jwt.decode(token, key, options=jwt_opts)
+        except JWTError as err:
+            log.debug("JWT Decode error: {}".format(err))
+            raise credentials_exception from err
 
         # Support overriding where email is returned in the id token
         if DISPATCH_JWT_EMAIL_OVERRIDE:
@@ -119,10 +132,29 @@ class PKCEAuthProviderPlugin(AuthenticationProviderPlugin):
             return data["email"]
 
 
+class HeaderAuthProviderPlugin(AuthenticationProviderPlugin):
+    title = "Dispatch Plugin - HTTP Header Authentication Provider"
+    slug = "dispatch-auth-provider-header"
+    description = "Authenticate users based on HTTP request header."
+    version = dispatch_plugin.__version__
+
+    author = "Filippo Giunchedi"
+    author_url = "https://github.com/filippog"
+
+    def get_current_user(self, request: Request, **kwargs):
+        value: str = request.headers.get(DISPATCH_AUTHENTICATION_PROVIDER_HEADER_NAME)
+        if not value:
+            log.error(
+                f"Unable to authenticate. Header {DISPATCH_AUTHENTICATION_PROVIDER_HEADER_NAME} not found."
+            )
+            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED)
+        return value
+
+
 class DispatchTicketPlugin(TicketPlugin):
     title = "Dispatch Plugin - Ticket Management"
     slug = "dispatch-ticket"
-    description = "Uses dispatch itself to create a ticket."
+    description = "Uses Dispatch itself to create a ticket."
     version = dispatch_plugin.__version__
 
     author = "Netflix"
@@ -132,17 +164,20 @@ class DispatchTicketPlugin(TicketPlugin):
         self,
         incident_id: int,
         title: str,
-        incident_type: str,
-        incident_priority: str,
-        commander: str,
-        reporter: str,
+        commander_email: str,
+        reporter_email: str,
         plugin_metadata: dict,
+        db_session=None,
     ):
-        """Creates a Dispatch ticket."""
-        resource_id = f"dispatch-{incident_id}"
+        """Creates a Dispatch incident ticket."""
+        incident = incident_service.get(db_session=db_session, incident_id=incident_id)
+
+        resource_id = (
+            f"dispatch-{incident.project.organization.slug}-{incident.project.slug}-{incident.id}"
+        )
         return {
             "resource_id": resource_id,
-            "weblink": f"{DISPATCH_UI_URL}/incidents/{resource_id}",
+            "weblink": f"{DISPATCH_UI_URL}/{incident.project.organization.name}/incidents/{resource_id}?project={incident.project.name}",
             "resource_type": "dispatch-internal-ticket",
         }
 
@@ -152,18 +187,65 @@ class DispatchTicketPlugin(TicketPlugin):
         title: str,
         description: str,
         incident_type: str,
-        priority: str,
+        incident_severity: str,
+        incident_priority: str,
         status: str,
         commander_email: str,
         reporter_email: str,
         conversation_weblink: str,
-        conference_weblink: str,
         document_weblink: str,
         storage_weblink: str,
+        conference_weblink: str,
         cost: float,
-        incident_type_plugin_metadata: dict = {},
+        incident_type_plugin_metadata: dict = None,
     ):
-        """Updates the incident."""
+        """Updates a Dispatch incident ticket."""
+        return
+
+    def delete(
+        self,
+        ticket_id: str,
+    ):
+        """Deletes a Dispatch ticket."""
+        return
+
+    def create_case_ticket(
+        self,
+        case_id: int,
+        title: str,
+        assignee_email: str,
+        # reporter: str,
+        case_type_plugin_metadata: dict,
+        db_session=None,
+    ):
+        """Creates a Dispatch case ticket."""
+        case = case_service.get(db_session=db_session, case_id=case_id)
+
+        resource_id = f"dispatch-{case.project.organization.slug}-{case.project.slug}-{case.id}"
+
+        return {
+            "resource_id": resource_id,
+            "weblink": f"{DISPATCH_UI_URL}/{case.project.organization.name}/cases/{resource_id}?project={case.project.name}",
+            "resource_type": "dispatch-internal-ticket",
+        }
+
+    def update_case_ticket(
+        self,
+        ticket_id: str,
+        title: str,
+        description: str,
+        resolution: str,
+        case_type: str,
+        case_severity: str,
+        case_priority: str,
+        status: str,
+        assignee_email: str,
+        # reporter_email: str,
+        document_weblink: str,
+        storage_weblink: str,
+        case_type_plugin_metadata: dict = None,
+    ):
+        """Updates a Dispatch case ticket."""
         return
 
 
@@ -177,38 +259,39 @@ class DispatchDocumentResolverPlugin(DocumentResolverPlugin):
     author_url = "https://github.com/netflix/dispatch.git"
 
     def get(
-        self, incident_type: str, incident_priority: str, incident_description: str, db_session=None
+        self,
+        incident: Incident,
+        db_session=None,
     ):
         """Fetches documents from Dispatch."""
-        route_in = {
-            "text": incident_description,
-            "context": {
-                "incident_priorities": [incident_priority],
-                "incident_types": [incident_type],
-                "terms": [],
-            },
-        }
-
-        route_in = RouteRequest(**route_in)
-        recommendation = route_service.get(db_session=db_session, route_in=route_in)
-        return recommendation.documents
+        recommendation = route_service.get(
+            db_session=db_session,
+            project_id=incident.project_id,
+            class_instance=incident,
+            models=[(Document, DocumentRead)],
+        )
+        return recommendation.matches
 
 
 class DispatchContactPlugin(ContactPlugin):
     title = "Dispatch Plugin - Contact plugin"
     slug = "dispatch-contact"
-    description = "Uses dispatch itself to resolve incident participants."
+    description = "Uses dispatch itself to fetch incident participants contact info."
     version = dispatch_plugin.__version__
 
     author = "Netflix"
     author_url = "https://github.com/netflix/dispatch.git"
 
     def get(self, email, db_session=None):
-        return getattr(
-            individual_service.get_by_email(db_session=db_session, email=email),
-            "__dict__",
-            {"email": email, "fullname": email},
+        individual = individual_service.get_by_email_and_project(
+            db_session=db_session, email=email, project_id=self.project_id
         )
+        if individual is None:
+            return {"email": email, "fullname": email}
+
+        data = individual.dict()
+        data["fullname"] = data["name"]
+        return data
 
 
 class DispatchParticipantResolverPlugin(ParticipantPlugin):
@@ -222,46 +305,84 @@ class DispatchParticipantResolverPlugin(ParticipantPlugin):
 
     def get(
         self,
-        incident_type: IncidentType,
-        incident_priority: IncidentPriority,
-        incident_description: str,
+        project_id: int,
+        class_instance: Base,
         db_session=None,
     ):
         """Fetches participants from Dispatch."""
-        route_in = {
-            "text": incident_description,
-            "context": {
-                "incident_priorities": [incident_priority],
-                "incident_types": [incident_type],
-                "terms": [],
-            },
-        }
-
-        route_in = RouteRequest(**route_in)
-        recommendation = route_service.get(db_session=db_session, route_in=route_in)
+        models = [
+            (IndividualContact, IndividualContactRead),
+            (Service, ServiceRead),
+            (TeamContact, TeamContactRead),
+        ]
+        recommendation = route_service.get(
+            db_session=db_session,
+            project_id=project_id,
+            class_instance=class_instance,
+            models=models,
+        )
 
         log.debug(f"Recommendation: {recommendation}")
-        # we need to resolve our service contacts to individuals
-        for s in recommendation.service_contacts:
-            plugin = plugin_service.get_by_slug(db_session=db_session, slug=s.type)
 
-            if plugin:
-                if plugin.enabled:
-                    log.debug(f"Resolving service contact. ServiceContact: {s}")
-                    individual_email = plugin.instance.get(s.external_id)
+        individual_contacts = []
+        team_contacts = []
+        for match in recommendation.matches:
+            if match.resource_type == TeamContact.__name__:
+                team = team_service.get_or_create(
+                    db_session=db_session,
+                    email=match.resource_state["email"],
+                    project=class_instance.project,
+                )
+                team_contacts.append(team)
 
-                    individual = individual_service.get_or_create(
-                        db_session=db_session, email=individual_email
-                    )
-                    recommendation.individual_contacts.append(individual)
-                else:
-                    log.warning(
-                        f"Skipping service contact. Service: {s.name} Reason: Associated service plugin not enabled."
-                    )
-            else:
-                log.warning(
-                    f"Skipping service contact. Service: {s.name} Reason: Associated service plugin not found."
+            if match.resource_type == IndividualContact.__name__:
+                individual = individual_service.get_or_create(
+                    db_session=db_session,
+                    email=match.resource_state["email"],
+                    project=class_instance.project,
                 )
 
+                individual_contacts.append((individual, None))
+
+            # we need to do more work when we have a service
+            if match.resource_type == Service.__name__:
+                plugin_instance = plugin_service.get_active_instance_by_slug(
+                    db_session=db_session,
+                    slug=match.resource_state["type"],
+                    project_id=project_id,
+                )
+
+                if plugin_instance:
+                    if plugin_instance.enabled:
+                        log.debug(
+                            f"Resolving service contact. ServiceContact: {match.resource_state}"
+                        )
+                        # ensure that service is enabled
+                        service = service_service.get_by_external_id_and_project_id(
+                            db_session=db_session,
+                            external_id=match.resource_state["external_id"],
+                            project_id=project_id,
+                        )
+                        if service.is_active:
+                            individual_email = plugin_instance.instance.get(
+                                match.resource_state["external_id"]
+                            )
+
+                            individual = individual_service.get_or_create(
+                                db_session=db_session,
+                                email=individual_email,
+                                project=class_instance.project,
+                            )
+
+                            individual_contacts.append((individual, match.resource_state["id"]))
+                    else:
+                        log.warning(
+                            f"Skipping service contact. Service: {match.resource_state['name']} Reason: Associated service plugin not enabled."
+                        )
+                else:
+                    log.warning(
+                        f"Skipping service contact. Service: {match.resource_state['name']} Reason: Associated service plugin not found."
+                    )
+
         db_session.commit()
-        return list(recommendation.individual_contacts), list(recommendation.team_contacts)
+        return individual_contacts, team_contacts

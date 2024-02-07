@@ -5,198 +5,178 @@
     :license: Apache, see LICENSE for more details.
 """
 import logging
-from typing import List, Optional
-from jinja2 import Template
+from typing import Any, List, Optional
 
-from dispatch.messaging import (
+from blockkit import (
+    Actions,
+    Button,
+    Context,
+    Divider,
+    MarkdownText,
+    Section,
+    StaticSelect,
+    PlainOption,
+)
+from slack_sdk.web.client import WebClient
+from slack_sdk.errors import SlackApiError
+
+from dispatch.messaging.strings import (
+    EVERGREEN_REMINDER_DESCRIPTION,
     INCIDENT_PARTICIPANT_SUGGESTED_READING_DESCRIPTION,
     INCIDENT_TASK_LIST_DESCRIPTION,
     INCIDENT_TASK_REMINDER_DESCRIPTION,
     MessageType,
     render_message_template,
 )
-
-from .config import (
-    SLACK_COMMAND_ADD_TIMELINE_EVENT_SLUG,
-    SLACK_COMMAND_ASSIGN_ROLE_SLUG,
-    SLACK_COMMAND_ENGAGE_ONCALL_SLUG,
-    SLACK_COMMAND_LIST_INCIDENTS_SLUG,
-    SLACK_COMMAND_LIST_MY_TASKS_SLUG,
-    SLACK_COMMAND_LIST_PARTICIPANTS_SLUG,
-    SLACK_COMMAND_LIST_RESOURCES_SLUG,
-    SLACK_COMMAND_LIST_TASKS_SLUG,
-    SLACK_COMMAND_REPORT_EXECUTIVE_SLUG,
-    SLACK_COMMAND_REPORT_INCIDENT_SLUG,
-    SLACK_COMMAND_REPORT_TACTICAL_SLUG,
-    SLACK_COMMAND_UPDATE_INCIDENT_SLUG,
-    SLACK_COMMAND_UPDATE_NOTIFICATIONS_GROUP_SLUG,
-    SLACK_COMMAND_UPDATE_PARTICIPANT_SLUG,
-    SLACK_COMMAND_RUN_WORKFLOW_SLUG,
-    SLACK_COMMAND_LIST_WORKFLOWS_SLUG,
-)
-
+from dispatch.plugins.dispatch_slack.config import SlackConfiguration
+from dispatch.plugins.dispatch_slack.enums import SlackAPIErrorCode
 
 log = logging.getLogger(__name__)
-
-
-INCIDENT_CONVERSATION_TACTICAL_REPORT_SUGGESTION = f"Consider providing a tactical report using the `{SLACK_COMMAND_REPORT_TACTICAL_SLUG}` command."
-
-INCIDENT_CONVERSATION_COMMAND_MESSAGE = {
-    SLACK_COMMAND_RUN_WORKFLOW_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a modal to run a workflow...",
-    },
-    SLACK_COMMAND_REPORT_TACTICAL_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to write a tactical report...",
-    },
-    SLACK_COMMAND_LIST_TASKS_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Fetching the list of incident tasks...",
-    },
-    SLACK_COMMAND_LIST_MY_TASKS_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Fetching your incident tasks...",
-    },
-    SLACK_COMMAND_LIST_PARTICIPANTS_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Fetching the list of incident participants...",
-    },
-    SLACK_COMMAND_ASSIGN_ROLE_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to assign a role to a participant...",
-    },
-    SLACK_COMMAND_UPDATE_INCIDENT_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to update incident information...",
-    },
-    SLACK_COMMAND_UPDATE_PARTICIPANT_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to update participant information...",
-    },
-    SLACK_COMMAND_ENGAGE_ONCALL_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to engage an oncall person...",
-    },
-    SLACK_COMMAND_LIST_RESOURCES_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Listing all incident resources...",
-    },
-    SLACK_COMMAND_REPORT_INCIDENT_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to report an incident...",
-    },
-    SLACK_COMMAND_REPORT_EXECUTIVE_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to write an executive report...",
-    },
-    SLACK_COMMAND_UPDATE_NOTIFICATIONS_GROUP_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to update the membership of the notifications group...",
-    },
-    SLACK_COMMAND_ADD_TIMELINE_EVENT_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Opening a dialog to add an event to the incident timeline...",
-    },
-    SLACK_COMMAND_LIST_INCIDENTS_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Fetching the list of incidents...",
-    },
-    SLACK_COMMAND_LIST_WORKFLOWS_SLUG: {
-        "response_type": "ephemeral",
-        "text": "Fetching the list of workflows...",
-    },
-}
-
-INCIDENT_CONVERSATION_COMMAND_RUN_IN_NONINCIDENT_CONVERSATION = """
-Looks like you tried to run `{{command}}` in an nonincident conversation.
-Incident-specifc commands can only be run in incident conversations.""".replace(
-    "\n", " "
-).strip()
-
-INCIDENT_CONVERSATION_COMMAND_RUN_IN_CONVERSATION_WHERE_BOT_NOT_PRESENT = """
-Looks like you tried to run `{{command}}` in a conversation where the Dispatch bot is not present.
-Add the bot to your conversation or run the command in one of the following conversations: {{conversations}}""".replace(
-    "\n", " "
-).strip()
-
-
-def create_command_run_in_nonincident_conversation_message(command: str):
-    """Creates a message for when an incident specific command is run in an nonincident conversation."""
-    return {
-        "response_type": "ephemeral",
-        "text": Template(INCIDENT_CONVERSATION_COMMAND_RUN_IN_NONINCIDENT_CONVERSATION).render(
-            command=command
-        ),
-    }
-
-
-def create_command_run_in_conversation_where_bot_not_present_message(
-    command: str, conversations: []
-):
-    """Creates a message for when a nonincident specific command is run in a conversation where the Dispatch bot is not present."""
-    conversations = (", ").join([f"#{conversation}" for conversation in conversations])
-    return {
-        "response_type": "ephemeral",
-        "text": Template(
-            INCIDENT_CONVERSATION_COMMAND_RUN_IN_CONVERSATION_WHERE_BOT_NOT_PRESENT
-        ).render(command=command, conversations=conversations),
-    }
-
-
-def create_incident_reported_confirmation_message(
-    title: str, incident_type: str, incident_priority: str
-):
-    """Creates an incident reported confirmation message."""
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "This is a confirmation that you have reported a security incident with the following information. You'll get invited to a Slack conversation soon.",
-            },
-        },
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Incident Title*: {title}"}},
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Incident Type*: {incident_type}"},
-        },
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Incident Priority*: {incident_priority}"},
-        },
-    ]
 
 
 def get_template(message_type: MessageType):
     """Fetches the correct template based on message type."""
     template_map = {
-        MessageType.incident_executive_report: (default_notification, None),
-        MessageType.incident_notification: (default_notification, None),
-        MessageType.incident_participant_welcome: (default_notification, None),
-        MessageType.incident_resources_message: (default_notification, None),
-        MessageType.incident_tactical_report: (default_notification, None),
+        MessageType.evergreen_reminder: (
+            default_notification,
+            EVERGREEN_REMINDER_DESCRIPTION,
+        ),
         MessageType.incident_participant_suggested_reading: (
             default_notification,
             INCIDENT_PARTICIPANT_SUGGESTED_READING_DESCRIPTION,
         ),
+        MessageType.incident_task_list: (default_notification, INCIDENT_TASK_LIST_DESCRIPTION),
         MessageType.incident_task_reminder: (
             default_notification,
             INCIDENT_TASK_REMINDER_DESCRIPTION,
         ),
-        MessageType.incident_status_reminder: (
-            default_notification,
-            None,
-        ),
-        MessageType.incident_task_list: (default_notification, INCIDENT_TASK_LIST_DESCRIPTION),
     }
 
-    template_func, description = template_map.get(message_type, (None, None))
+    return template_map.get(message_type, (default_notification, None))
 
-    if not template_func:
-        raise Exception(f"Unable to determine template. MessageType: {message_type}")
 
-    return template_func, description
+def get_incident_conversation_command_message(
+    command_string: str, config: Optional[SlackConfiguration] = None
+) -> dict[str, str]:
+    """Fetches a custom message and response type for each respective slash command."""
+
+    default = {
+        "response_type": "ephemeral",
+        "text": f"Running command... `{command_string}`",
+    }
+
+    if not config:
+        return default
+
+    command_messages = {
+        config.slack_command_run_workflow: {
+            "response_type": "ephemeral",
+            "text": "Opening a modal to run a workflow...",
+        },
+        config.slack_command_report_tactical: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to write a tactical report...",
+        },
+        config.slack_command_list_tasks: {
+            "response_type": "ephemeral",
+            "text": "Fetching the list of incident tasks...",
+        },
+        config.slack_command_list_my_tasks: {
+            "response_type": "ephemeral",
+            "text": "Fetching your incident tasks...",
+        },
+        config.slack_command_list_participants: {
+            "response_type": "ephemeral",
+            "text": "Fetching the list of incident participants...",
+        },
+        config.slack_command_assign_role: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to assign a role to a participant...",
+        },
+        config.slack_command_update_incident: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to update incident information...",
+        },
+        config.slack_command_update_participant: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to update participant information...",
+        },
+        config.slack_command_engage_oncall: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to engage an oncall person...",
+        },
+        config.slack_command_report_incident: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to report an incident...",
+        },
+        config.slack_command_report_executive: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to write an executive report...",
+        },
+        config.slack_command_update_notifications_group: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to update the membership of the notifications group...",
+        },
+        config.slack_command_add_timeline_event: {
+            "response_type": "ephemeral",
+            "text": "Opening a dialog to add an event to the incident timeline...",
+        },
+        config.slack_command_list_incidents: {
+            "response_type": "ephemeral",
+            "text": "Fetching the list of incidents...",
+        },
+        config.slack_command_list_workflows: {
+            "response_type": "ephemeral",
+            "text": "Fetching the list of workflows...",
+        },
+    }
+
+    return command_messages.get(command_string, default)
+
+
+def build_command_error_message(payload: dict, error: Any) -> str:
+    message = f"""Unfortunately we couldn't run `{payload['command']}` due to the following reason: {str(error)}  """
+    return message
+
+
+def build_role_error_message(payload: dict) -> str:
+    message = f"""I see you tried to run `{payload['command']}`. This is a sensitive command and cannot be run with the incident role you are currently assigned."""
+    return message
+
+
+def build_context_error_message(payload: dict, error: Any) -> str:
+    message = (
+        f"""I see you tried to run `{payload['command']}` in an non-incident conversation. Incident-specifc commands can only be run in incident conversations."""  # command_context_middleware()
+        if payload.get("command")
+        else str(error)  # everything else
+    )
+    return message
+
+
+def build_bot_not_present_message(client: WebClient, command: str, conversations: dict) -> str:
+    team_id = client.team_info(client)["team"]["id"]
+
+    deep_links = [
+        f"<slack://channel?team={team_id}&id={c['id']}|#{c['name']}>" for c in conversations
+    ]
+
+    message = f"""
+    Looks like you tried to run `{command}` in a conversation where the Dispatch bot is not present. Add the bot to your conversation or run the command in one of the following conversations:\n\n {(", ").join(deep_links)}"""
+    return message
+
+
+def build_slack_api_error_message(error: SlackApiError) -> str:
+    return (
+        "Sorry, the request to Slack timed out. Try running your command again."
+        if error.response.get("error") == SlackAPIErrorCode.VIEW_EXPIRED
+        else "Sorry, we've run into an unexpected error with Slack."
+    )
+
+
+def build_unexpected_error_message(guid: str) -> str:
+    message = f"""Sorry, we've run into an unexpected error. \
+For help please reach out to your Dispatch admins and provide them with the following token: `{guid}`"""
+    return message
 
 
 def format_default_text(item: dict):
@@ -204,14 +184,15 @@ def format_default_text(item: dict):
     if item.get("title_link"):
         return f"*<{item['title_link']}|{item['title']}>*\n{item['text']}"
     if item.get("datetime"):
-        return f"*{item['title']}* \n <!date^{int(item['datetime'].timestamp())}^ {{date}} | {item['datetime']}"
-    return f"*{item['title']}*\n{item['text']}"
+        return f"*{item['title']}*\n <!date^{int(item['datetime'].timestamp())}^ {{date}} | {item['datetime']}"
+    if item.get("title"):
+        return f"*{item['title']}*\n{item['text']}"
+    return item["text"]
 
 
 def default_notification(items: list):
-    """This is a default dispatch slack notification."""
-    blocks = []
-    blocks.append({"type": "divider"})
+    """Creates blocks for a default notification."""
+    blocks = [Divider()]
     for item in items:
         if isinstance(item, list):  # handle case where we are passing multiple grouped items
             blocks += default_notification(item)
@@ -219,26 +200,64 @@ def default_notification(items: list):
         if item.get("title_link") == "None":  # avoid adding blocks with no data
             continue
 
-        block = {"type": "section", "text": {"type": "mrkdwn", "text": format_default_text(item)}}
+        if item.get("type"):
+            if item["type"] == "context":
+                blocks.append(Context(elements=[MarkdownText(text=format_default_text(item))]))
+            else:
+                blocks.append(Section(text=format_default_text(item)))
+        else:
+            blocks.append(Section(text=format_default_text(item)))
 
-        if item.get("button_text") and item.get("button_value"):
-            block.update(
-                {
-                    "block_id": item["button_action"],
-                    "accessory": {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": item["button_text"]},
-                        "value": item["button_value"],
-                    },
-                }
-            )
+        if item.get("buttons"):
+            elements = []
+            for button in item["buttons"]:
+                if button.get("button_text") and button.get("button_value"):
+                    if button.get("button_url"):
+                        element = Button(
+                            action_id=button["button_action"],
+                            text=button["button_text"],
+                            value=button["button_value"],
+                            url=button["button_url"],
+                        )
+                    else:
+                        element = Button(
+                            action_id=button["button_action"],
+                            text=button["button_text"],
+                            value=button["button_value"],
+                        )
 
-        blocks.append(block)
+                    elements.append(element)
+            blocks.append(Actions(elements=elements))
+
+        if select := item.get("select"):
+            options = []
+            for option in select["options"]:
+                element = PlainOption(text=option["option_text"], value=option["option_value"])
+                options.append(element)
+
+            static_select = []
+            if select.get("placeholder"):
+                static_select.append(
+                    StaticSelect(
+                        placeholder=select["placeholder"],
+                        options=options,
+                        action_id=select["select_action"],
+                    )
+                )
+            else:
+                static_select.append(
+                    StaticSelect(options=options, action_id=select["select_action"])
+                )
+            blocks.append(Actions(elements=static_select))
+
     return blocks
 
 
 def create_message_blocks(
-    message_template: List[dict], message_type: MessageType, items: Optional[List] = None, **kwargs
+    message_template: List[dict],
+    message_type: MessageType,
+    items: Optional[List] = None,
+    **kwargs,
 ):
     """Creates all required blocks for a given message type and template."""
     if not items:
@@ -248,25 +267,24 @@ def create_message_blocks(
         items.append(kwargs)  # combine items and kwargs
 
     template_func, description = get_template(message_type)
-
     blocks = []
     if description:  # include optional description text (based on message type)
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": description}})
+        blocks.append(Section(text=description))
 
     for item in items:
-        rendered_items = render_message_template(message_template, **item)
-        blocks += template_func(rendered_items)
+        if message_template:
+            rendered_items = render_message_template(message_template, **item)
+            blocks += template_func(rendered_items)
+        else:
+            blocks += template_func(**item)["blocks"]
 
-    return blocks
+    blocks_grouped = []
+    if items:
+        if items[0].get("items_grouped"):
+            for item in items[0]["items_grouped"]:
+                rendered_items_grouped = render_message_template(
+                    items[0]["items_grouped_template"], **item
+                )
+                blocks_grouped += template_func(rendered_items_grouped)
 
-
-def slack_preview(message, block=None):
-    """Helper function that will generate a preview link to see what your slack message will look like."""
-    from urllib.parse import quote_plus
-    import json
-
-    message = quote_plus(json.dumps(message))
-    if block:
-        print(f"https://api.slack.com/tools/block-kit-builder?blocks={message}")
-    else:
-        print(f"https://api.slack.com/docs/messages/builder?msg={message}")
+    return blocks + blocks_grouped

@@ -1,91 +1,118 @@
 <template>
   <v-combobox
-    v-model="terms"
     :items="items"
-    :search-input.sync="search"
-    hide-selected
     :label="label"
-    multiple
-    chips
     :loading="loading"
-    @update:search-input="getFilteredData({ q: $event })"
+    v-model:search="search"
+    @update:search="getFilteredData()"
+    chips
+    closable-chips
+    hide-selected
+    item-title="text"
+    multiple
+    no-filter
+    v-model="terms"
   >
-    <template v-slot:no-data>
+    <template #no-data>
       <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No Terms matching "
-            <strong>{{ search }}</strong
-            >". Press <kbd>enter</kbd> to create a new one
-          </v-list-item-title>
-        </v-list-item-content>
+        <v-list-item-title>
+          No terms matching "
+          <strong>{{ search }}</strong
+          >". Press <kbd>enter</kbd> to create a new one.
+        </v-list-item-title>
       </v-list-item>
     </template>
   </v-combobox>
 </template>
 
 <script>
-import TermApi from "@/term/api"
 import { cloneDeep, debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import TermApi from "@/term/api"
+
 export default {
   name: "TermCombobox",
   props: {
-    value: {
+    modelValue: {
       type: Array,
-      default: function() {
+      default: function () {
         return []
-      }
+      },
     },
     label: {
       type: String,
-      default: "Add Terms"
-    }
+      default: "Add Terms",
+    },
+    project: {
+      type: [Object],
+      default: null,
+    },
   },
   data() {
     return {
       loading: false,
       items: [],
-      search: null
+      search: null,
     }
   },
 
   computed: {
     terms: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
         this.search = null
-        this._terms = value.map(v => {
+        const terms = value.filter((v) => {
           if (typeof v === "string") {
-            v = {
-              text: v
-            }
-            this.items.push(v)
+            return false
           }
-          return v
+          return true
         })
-        this.$emit("input", this._terms)
-      }
-    }
+        this.$emit("update:modelValue", terms)
+      },
+    },
   },
 
   created() {
-    this.fetchData({})
+    this.fetchData()
   },
 
   methods: {
-    fetchData(filterOptions) {
+    loadMore() {
+      this.numItems = this.numItems + 5
+      this.fetchData()
+    },
+    fetchData() {
       this.error = null
-      this.loading = true
-      TermApi.getAll(filterOptions).then(response => {
+      this.loading = "error"
+
+      let filterOptions = {
+        q: this.search,
+        itemsPerPage: this.numItems,
+        filters: {
+          project: [this.project],
+        },
+      }
+
+      filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+
+      TermApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
+        this.total = response.data.total
+
+        if (this.items.length < this.total) {
+          this.more = true
+        } else {
+          this.more = false
+        }
         this.loading = false
       })
     },
-    getFilteredData: debounce(function(options) {
-      this.fetchData(options)
-    }, 500)
-  }
+    getFilteredData: debounce(function () {
+      this.fetchData()
+    }, 500),
+  },
 }
 </script>

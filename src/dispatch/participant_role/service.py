@@ -1,7 +1,4 @@
 from datetime import datetime
-
-from fastapi.encoders import jsonable_encoder
-
 from typing import List, Optional
 
 from dispatch.participant import service as participant_service
@@ -21,9 +18,18 @@ def get(*, db_session, participant_role_id: int) -> Optional[ParticipantRole]:
     )
 
 
-def get_all(*, db_session):
-    """Returns all participant roles."""
-    return db_session.query(ParticipantRole)
+def get_last_active_role(
+    *,
+    db_session,
+    participant_id: int,
+) -> Optional[ParticipantRole]:
+    """Returns the participant's last active role."""
+    return (
+        db_session.query(ParticipantRole)
+        .filter(ParticipantRole.participant_id == participant_id)
+        .order_by(ParticipantRole.renounced_at.desc())
+        .first()
+    )
 
 
 def get_all_active_roles(*, db_session, participant_id: int) -> List[Optional[ParticipantRole]]:
@@ -33,6 +39,11 @@ def get_all_active_roles(*, db_session, participant_id: int) -> List[Optional[Pa
         .filter(ParticipantRole.participant_id == participant_id)
         .filter(ParticipantRole.renounced_at.is_(None))
     )
+
+
+def get_all(*, db_session):
+    """Returns all participant roles."""
+    return db_session.query(ParticipantRole)
 
 
 def add_role(
@@ -67,10 +78,8 @@ def create(*, db_session, participant_role_in: ParticipantRoleCreate) -> Partici
 def update(
     *, db_session, participant_role: ParticipantRole, participant_role_in: ParticipantRoleUpdate
 ) -> ParticipantRole:
-    """
-    Updates a participant role.
-    """
-    participant_role_data = jsonable_encoder(participant_role)
+    """Updates a participant role."""
+    participant_role_data = participant_role.dict()
 
     update_data = participant_role_in.dict(skip_defaults=True)
 
@@ -78,15 +87,12 @@ def update(
         if field in update_data:
             setattr(participant_role, field, update_data[field])
 
-    db_session.add(participant_role)
     db_session.commit()
     return participant_role
 
 
 def delete(*, db_session, participant_role_id: int):
-    """
-    Deletes a participant role.
-    """
+    """Deletes a participant role."""
     participant_role = (
         db_session.query(ParticipantRole).filter(ParticipantRole.id == participant_role_id).first()
     )

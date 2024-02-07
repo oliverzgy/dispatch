@@ -1,11 +1,11 @@
 <template>
   <div class="app-root">
     <router-view />
-    <v-snackbar bottom right :value="updateExists" :timeout="0" color="primary">
+    <v-snackbar location="bottom right" :model-value="updateExists" :timeout="-1" color="info">
       An update is available
-      <v-btn text @click="refreshApp">
-        Update
-      </v-btn>
+      <template #action="{ attrs }">
+        <v-btn variant="text" v-bind="attrs" @click="refreshApp"> Update </v-btn>
+      </template>
     </v-snackbar>
   </div>
 </template>
@@ -17,14 +17,19 @@ export default {
   data() {
     return {}
   },
-  mixins: [update]
+
+  mixins: [update],
 }
 </script>
 
-<style scoped>
+<style>
 .setting-fab {
   top: 50% !important;
   right: 0;
   border-radius: 0;
+}
+
+a {
+  color: rgb(var(--v-theme-anchor));
 }
 </style>

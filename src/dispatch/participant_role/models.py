@@ -1,19 +1,13 @@
 from datetime import datetime
-from enum import Enum
+
 from typing import List, Optional
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 
-from dispatch.database import Base
-from dispatch.models import DispatchBase
+from dispatch.database.core import Base
+from dispatch.models import DispatchBase, PrimaryKey
 
-
-class ParticipantRoleType(str, Enum):
-    incident_commander = "Incident Commander"
-    scribe = "Scribe"
-    liaison = "Liaison"
-    participant = "Participant"
-    reporter = "Reporter"
+from .enums import ParticipantRoleType
 
 
 class ParticipantRole(Base):
@@ -21,7 +15,8 @@ class ParticipantRole(Base):
     assumed_at = Column(DateTime, default=datetime.utcnow)
     renounced_at = Column(DateTime)
     role = Column(String, default=ParticipantRoleType.participant)
-    participant_id = Column(Integer, ForeignKey("participant.id"))
+    activity = Column(Integer, default=0)
+    participant_id = Column(Integer, ForeignKey("participant.id", ondelete="CASCADE"))
 
 
 # Pydantic models...
@@ -38,11 +33,15 @@ class ParticipantRoleUpdate(ParticipantRoleBase):
 
 
 class ParticipantRoleRead(ParticipantRoleBase):
-    id: int
+    id: PrimaryKey
     assumed_at: Optional[datetime] = None
     renounced_at: Optional[datetime] = None
+    activity: Optional[int]
+
+
+class ParticipantRoleReadMinimal(ParticipantRoleRead):
+    pass
 
 
 class ParticipantRolePagination(ParticipantRoleBase):
-    total: int
     items: List[ParticipantRoleRead] = []

@@ -1,119 +1,127 @@
 <template>
-  <ValidationObserver v-slot="{ invalid, validated }">
-    <v-navigation-drawer v-model="showCreateEdit" app clipped right width="500">
-      <template v-slot:prepend>
-        <v-list-item two-line>
-          <v-list-item-content>
-            <v-list-item-title v-if="id" class="title">Edit</v-list-item-title>
-            <v-list-item-title v-else class="title">New</v-list-item-title>
-            <v-list-item-subtitle>Individual</v-list-item-subtitle>
-          </v-list-item-content>
-          <v-btn
-            icon
-            color="primary"
-            :loading="loading"
-            :disabled="invalid || !validated"
-            @click="save()"
-          >
-            <v-icon>save</v-icon>
-          </v-btn>
-          <v-btn icon color="secondary" @click="closeCreateEdit()">
-            <v-icon>close</v-icon>
-          </v-btn>
+  <v-form @submit.prevent v-slot="{ isValid }">
+    <v-navigation-drawer v-model="showCreateEdit" location="right" width="500">
+      <template #prepend>
+        <v-list-item lines="two">
+          <v-list-item-title v-if="id" class="text-h6"> Edit </v-list-item-title>
+          <v-list-item-title v-else class="text-h6"> New </v-list-item-title>
+          <v-list-item-subtitle>Individual</v-list-item-subtitle>
+
+          <template #append>
+            <v-btn
+              icon
+              variant="text"
+              color="info"
+              :loading="loading"
+              :disabled="!isValid.value"
+              @click="save()"
+            >
+              <v-icon>mdi-content-save</v-icon>
+            </v-btn>
+            <v-btn icon variant="text" color="secondary" @click="closeCreateEdit()">
+              <v-icon>mdi-close</v-icon>
+            </v-btn>
+          </template>
         </v-list-item>
       </template>
-      <v-card flat>
+      <v-card>
         <v-card-text>
-          <v-container grid-list-md>
-            <v-layout wrap>
-              <v-flex xs12>
-                <span class="subtitle-2">Details</span>
-              </v-flex>
-              <v-flex xs12>
-                <ValidationProvider name="Name" rules="required" immediate>
-                  <v-text-field
-                    v-model="name"
-                    slot-scope="{ errors, valid }"
-                    :error-messages="errors"
-                    :success="valid"
-                    label="Name"
-                    hint="Name of individual."
-                    clearable
-                    required
-                  />
-                </ValidationProvider>
-              </v-flex>
-              <v-flex xs12>
-                <ValidationProvider name="Email" rules="required" immediate>
-                  <v-text-field
-                    v-model="email"
-                    slot-scope="{ errors, valid }"
-                    label="Email"
-                    :error-messages="errors"
-                    :success="valid"
-                    hint="Individual's email address."
-                    clearable
-                    required
-                  />
-                </ValidationProvider>
-              </v-flex>
-              <v-flex xs12>
-                <ValidationProvider name="Company" rules="required" immediate>
-                  <v-text-field
-                    v-model="company"
-                    slot-scope="{ errors, valid }"
-                    label="Company"
-                    :error-messages="errors"
-                    :success="valid"
-                    hint="Individual's company."
-                    clearable
-                    required
-                  />
-                </ValidationProvider>
-              </v-flex>
-              <v-flex xs12>
-                <span class="subtitle-2">Engagement</span>
-              </v-flex>
-              <v-flex xs12>
-                <term-combobox v-model="terms" />
-              </v-flex>
-              <v-flex xs12>
-                <incident-priority-multi-select v-model="incident_priorities" />
-              </v-flex>
-              <v-flex>
-                <incident-type-multi-select v-model="incident_types" />
-              </v-flex>
-            </v-layout>
+          <v-container>
+            <v-row>
+              <v-col cols="12">
+                <span class="text-subtitle-2">Details</span>
+              </v-col>
+              <v-col cols="12">
+                <v-text-field
+                  v-model="name"
+                  label="Name"
+                  hint="Name of individual."
+                  clearable
+                  required
+                  name="Name"
+                  :rules="[rules.required]"
+                />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field
+                  v-model="email"
+                  label="Email"
+                  hint="Individual's email address."
+                  clearable
+                  required
+                  name="Email"
+                  :rules="[rules.required]"
+                />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field
+                  v-model="company"
+                  label="Company"
+                  hint="Individual's company."
+                  clearable
+                  name="Company"
+                />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field
+                  v-model="external_id"
+                  label="External Id"
+                  hint="Individual's external ID."
+                  clearable
+                  name="ExternalId"
+                />
+              </v-col>
+              <v-col cols="12">
+                <span class="text-subtitle-2"
+                  >Engagement
+                  <v-tooltip max-width="250px" location="bottom">
+                    <template #activator="{ props }">
+                      <v-icon v-bind="props">mdi-help-circle-outline</v-icon>
+                    </template>
+                    This individual will be automatically engaged for any incident or case matching
+                    the following filters.
+                  </v-tooltip>
+                </span>
+              </v-col>
+              <v-col cols="12">
+                <search-filter-combobox
+                  v-model="filters"
+                  :project="project"
+                  label="Filters"
+                  hint="Select one or more filters that will determine when the individual is engaged."
+                />
+              </v-col>
+            </v-row>
           </v-container>
         </v-card-text>
       </v-card>
     </v-navigation-drawer>
-  </ValidationObserver>
+  </v-form>
 </template>
 
 <script>
+import { required } from "@/util/form"
 import { mapFields } from "vuex-map-fields"
 import { mapActions } from "vuex"
-import { ValidationObserver, ValidationProvider, extend } from "vee-validate"
-import { required } from "vee-validate/dist/rules"
-import IncidentPriorityMultiSelect from "@/incident_priority/IncidentPriorityMultiSelect.vue"
-import IncidentTypeMultiSelect from "@/incident_type/IncidentTypeMultiSelect.vue"
-import TermCombobox from "@/term/TermCombobox.vue"
 
-extend("required", {
-  ...required,
-  message: "This field is required"
-})
+import SearchFilterCombobox from "@/search/SearchFilterCombobox.vue"
 
 export default {
+  setup() {
+    return {
+      rules: { required },
+    }
+  },
   name: "IndividualNewEditSheet",
 
+  data() {
+    return {
+      visibilities: ["Open"],
+    }
+  },
+
   components: {
-    ValidationObserver,
-    ValidationProvider,
-    IncidentPriorityMultiSelect,
-    IncidentTypeMultiSelect,
-    TermCombobox
+    SearchFilterCombobox,
   },
 
   computed: {
@@ -121,17 +129,23 @@ export default {
       "selected.name",
       "selected.email",
       "selected.company",
-      "selected.terms",
-      "selected.incident_priorities",
-      "selected.incident_types",
+      "selected.external_id",
+      "selected.filters",
       "selected.id",
+      "selected.project",
       "selected.loading",
-      "dialogs.showCreateEdit"
-    ])
+      "dialogs.showCreateEdit",
+    ]),
   },
 
   methods: {
-    ...mapActions("individual", ["save", "closeCreateEdit"])
-  }
+    ...mapActions("individual", ["save", "closeCreateEdit"]),
+  },
+
+  created() {
+    if (this.$route.query.project) {
+      this.project = { name: this.$route.query.project }
+    }
+  },
 }
 </script>

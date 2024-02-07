@@ -1,65 +1,63 @@
 <template>
   <v-combobox
-    v-model="incidents"
     :items="items"
-    item-text="name"
-    :search-input.sync="search"
-    hide-selected
     :label="label"
-    multiple
-    clearable
-    chips
-    no-filter
     :loading="loading"
-    @update:search-input="getFilteredData({ q: $event })"
+    v-model:search="search"
+    @update:search="getFilteredData()"
+    chips
+    clearable
+    closable-chips
+    hide-selected
+    item-title="name"
+    item-value="id"
+    multiple
+    no-filter
+    v-model="incidents"
   >
-    <template v-slot:no-data>
+    <template #no-data>
       <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No Incidents matching "
-            <strong>{{ search }}</strong
-            >"
-          </v-list-item-title>
-        </v-list-item-content>
+        <v-list-item-title>
+          No incidents matching "<strong>{{ search }}</strong
+          >"
+        </v-list-item-title>
       </v-list-item>
     </template>
-    <template v-slot:item="data">
-      <template>
-        <v-list-item-content>
-          <v-list-item-title v-html="data.item.name"></v-list-item-title>
-          <v-list-item-subtitle v-html="data.item.title"></v-list-item-subtitle>
-        </v-list-item-content>
-      </template>
+    <template #item="data">
+      <v-list-item v-bind="data.props" :title="null">
+        <v-list-item-title>{{ data.item.raw.name }}</v-list-item-title>
+        <v-list-item-subtitle :title="data.item.raw.title">
+          {{ data.item.raw.title }}
+        </v-list-item-subtitle>
+      </v-list-item>
     </template>
-    <template v-slot:append-item>
+    <template #append-item>
       <v-list-item v-if="more" @click="loadMore()">
-        <v-list-item-content>
-          <v-list-item-subtitle>
-            Load More
-          </v-list-item-subtitle>
-        </v-list-item-content>
+        <v-list-item-subtitle> Load More </v-list-item-subtitle>
       </v-list-item>
     </template>
   </v-combobox>
 </template>
 
 <script>
-import IncidentApi from "@/incident/api"
 import { cloneDeep, debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import IncidentApi from "@/incident/api"
+
 export default {
   name: "IncidentFilterCombobox",
   props: {
-    value: {
+    modelValue: {
       type: Array,
-      default: function() {
+      default: function () {
         return []
-      }
+      },
     },
     label: {
       type: String,
-      default: "Add Incidents"
-    }
+      default: "Add Incidents",
+    },
   },
   data() {
     return {
@@ -67,44 +65,58 @@ export default {
       items: [],
       more: false,
       numItems: 5,
-      search: null
+      search: null,
     }
   },
 
   computed: {
     incidents: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
         this.search = null
-        this._incidents = value.map(v => {
+        const incidents = value.filter((v) => {
           if (typeof v === "string") {
-            v = {
-              name: v
-            }
-            this.items.push(v)
+            return false
           }
-          return v
+          return true
         })
-        this.$emit("input", this._incidents)
-      }
-    }
+        this.$emit("update:modelValue", incidents)
+      },
+    },
   },
 
   created() {
-    this.fetchData({})
+    this.fetchData()
   },
 
   methods: {
     loadMore() {
       this.numItems = this.numItems + 5
-      this.getFilteredData({ q: this.search, itemsPerPage: this.numItems })
+      this.fetchData()
     },
-    fetchData(filterOptions) {
+    fetchData() {
       this.error = null
-      this.loading = true
-      IncidentApi.getAll(filterOptions).then(response => {
+      this.loading = "error"
+
+      let filterOptions = {
+        q: this.search,
+        sortBy: ["name"],
+        descending: [false],
+        itemsPerPage: this.numItems,
+      }
+
+      if (this.project) {
+        filterOptions = {
+          ...filterOptions,
+          filters: {
+            project: [this.project],
+          },
+        }
+        filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+      }
+      IncidentApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
         this.total = response.data.total
 
@@ -117,9 +129,9 @@ export default {
         this.loading = false
       })
     },
-    getFilteredData: debounce(function(options) {
-      this.fetchData(options)
-    }, 500)
-  }
+    getFilteredData: debounce(function () {
+      this.fetchData()
+    }, 500),
+  },
 }
 </script>

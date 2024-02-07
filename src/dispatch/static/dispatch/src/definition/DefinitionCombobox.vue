@@ -1,88 +1,121 @@
 <template>
   <v-combobox
-    v-model="definitions"
     :items="items"
-    :search-input.sync="search"
+    :loading="loading"
+    v-model:search="search"
+    @update:search="getFilteredData()"
+    chips
+    closable-chips
     hide-selected
     label="Add definitions"
     multiple
-    chips
-    :loading="loading"
-    @update:search-input="getFilteredData({ q: $event })"
+    no-filter
+    v-model="definitions"
   >
-    <template v-slot:no-data>
+    <template #no-data>
       <v-list-item>
-        <v-list-item-content>
-          <v-list-item-title>
-            No results matching "
-            <strong>{{ search }}</strong
-            >". Press <kbd>enter</kbd> to create a new one
-          </v-list-item-title>
-        </v-list-item-content>
+        <v-list-item-title>
+          No results matching "
+          <strong>{{ search }}</strong
+          >". Press <kbd>enter</kbd> to create a new one
+        </v-list-item-title>
+      </v-list-item>
+    </template>
+    <template #append-item>
+      <v-list-item v-if="more" @click="loadMore()">
+        <v-list-item-subtitle> Load More </v-list-item-subtitle>
       </v-list-item>
     </template>
   </v-combobox>
 </template>
 
 <script>
-import DefinitionApi from "@/definition/api"
 import { cloneDeep, debounce } from "lodash"
+
+import SearchUtils from "@/search/utils"
+import DefinitionApi from "@/definition/api"
+
 export default {
   name: "DefinitionCombobox",
   props: {
-    value: {
+    modelValue: {
       type: Array,
-      default: function() {
+      default: function () {
         return []
-      }
-    }
+      },
+    },
+    project: {
+      type: [Object],
+      default: null,
+    },
   },
 
   data() {
     return {
       loading: false,
       items: [],
-      search: null
+      more: false,
+      numItems: 5,
+      search: null,
     }
   },
 
   computed: {
     definitions: {
       get() {
-        return cloneDeep(this.value)
+        return cloneDeep(this.modelValue)
       },
       set(value) {
         this.search = null
-        this._definitions = value.map(v => {
+        const definitions = value.filter((v) => {
           if (typeof v === "string") {
-            v = {
-              text: v
-            }
-            this.items.push(v)
+            return false
           }
-          return v
+          return true
         })
-        this.$emit("input", this._definitions)
-      }
-    }
+        this.$emit("update:modelValue", definitions)
+      },
+    },
   },
 
   created() {
-    this.fetchData({})
+    this.fetchData()
   },
 
   methods: {
-    fetchData(filterOptions) {
+    loadMore() {
+      this.numItems = this.numItems + 5
+      this.fetchData()
+    },
+    fetchData() {
       this.error = null
-      this.loading = true
-      DefinitionApi.getAll(filterOptions).then(response => {
+      this.loading = "error"
+
+      let filterOptions = {
+        q: this.search,
+        filters: {
+          project: [this.project],
+        },
+      }
+
+      filterOptions = SearchUtils.createParametersFromTableOptions({ ...filterOptions })
+
+      DefinitionApi.getAll(filterOptions).then((response) => {
         this.items = response.data.items
+        this.total = response.data.total
+
+        if (this.items.length < this.total) {
+          this.more = true
+        } else {
+          this.more = false
+        }
+
         this.loading = false
       })
     },
-    getFilteredData: debounce(function(options) {
+    getFilteredData: debounce(function (options) {
       this.fetchData(options)
-    }, 500)
-  }
+    }, 500),
+  },
 }
 </script>

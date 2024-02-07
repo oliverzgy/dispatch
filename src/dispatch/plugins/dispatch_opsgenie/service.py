@@ -1,18 +1,18 @@
-import requests
 import json
+import requests
+
 from dispatch.exceptions import DispatchPluginException
-from .config import OPSGENIE_API_KEY, OPSGENIE_TEAM_ID
 
 
-def get_auth():
-    return {"Authorization": f"GenieKey {OPSGENIE_API_KEY}"}
+def get_auth(api_key: str) -> dict:
+    return {"Authorization": f"GenieKey {api_key.get_secret_value()}"}
 
 
-def get_oncall() -> str:
+def get_oncall(api_key: str, team_id: str) -> str:
     schedule_api = "https://api.opsgenie.com/v2/schedules"
     response = requests.get(
-        f"{schedule_api}/{OPSGENIE_TEAM_ID}/on-calls",
-        headers=get_auth(),
+        f"{schedule_api}/{team_id}/on-calls",
+        headers=get_auth(api_key),
     )
 
     if response.status_code != 200:
@@ -26,16 +26,23 @@ def get_oncall() -> str:
     return body["onCallParticipants"][0].get("name")
 
 
-def page_oncall(incident_title: str, incident_name: str, incident_description: str) -> str:
+def page_oncall(
+    api_key: str,
+    service_id: str,
+    incident_name: str,
+    incident_title: str,
+    incident_description: str,
+) -> str:
     data = {
         "message": incident_title,
-        "alias": incident_title + incident_name,
+        "alias": f"{incident_name}-{incident_title}",
         "description": incident_description,
+        "responders": [{"id": service_id, "type": "schedule"}],
     }
 
     response = requests.post(
         "https://api.opsgenie.com/v2/alerts",
-        headers={**get_auth(), "content-type": "application/json"},
+        headers={**get_auth(api_key), "content-type": "application/json"},
         data=json.dumps(data),
     )
     if response.status_code != 202:

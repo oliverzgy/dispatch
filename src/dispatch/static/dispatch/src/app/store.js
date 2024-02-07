@@ -1,43 +1,32 @@
 import { getField, updateField } from "vuex-map-fields"
 import router from "@/router"
 
-const getDefaultSnackbarState = () => {
+const getDefaultRefreshState = () => {
   return {
-    text: null,
-    color: "primary",
     show: false,
-    timeout: 2000
+    message: "",
   }
 }
 
-const getDefaulRefreshState = () => {
-  return {
-    show: false,
-    message: "blah"
-  }
-}
+const latestCommitHash = import.meta.env.VITE_DISPATCH_COMMIT_HASH
+const latestCommitMessage = import.meta.env.VITE_DISPATCH_COMMIT_MESSAGE
 
 const state = {
   toggleDrawer: true,
-  snackbar: {
-    ...getDefaultSnackbarState()
-  },
   refresh: {
-    ...getDefaulRefreshState()
+    ...getDefaultRefreshState(),
   },
-  loading: false
+  loading: false,
+  currentVersion: latestCommitHash,
 }
 
 const getters = {
-  getField
+  getField,
 }
 
 const actions = {
   toggleDrawer({ commit }, value) {
     commit("TOGGLE_DRAWER", value)
-  },
-  closeSnackBar({ commit }) {
-    commit("RESET_SNACKBAR")
   },
   performRefresh({ commit }) {
     router.go()
@@ -45,7 +34,17 @@ const actions = {
   },
   setLoading({ commit }, value) {
     commit("SET_LOADING", value)
-  }
+  },
+  showCommitMessage({ commit }) {
+    commit(
+      "notification_backend/addBeNotification",
+      {
+        text: `Hash: ${latestCommitHash} | Message: ${latestCommitMessage}`,
+        type: "success",
+      },
+      { root: true }
+    )
+  },
 }
 
 const mutations = {
@@ -57,19 +56,12 @@ const mutations = {
     state.refresh = value
     state.refresh.show = true
   },
-  SET_SNACKBAR(state, value) {
-    state.snackbar = value
-    state.snackbar.show = true
-  },
   SET_LOADING(state, value) {
     state.loading = value
   },
-  RESET_SNACKBAR(state) {
-    state.snackbar = Object.assign(state.snackbar, getDefaultSnackbarState())
-  },
   RESET_REFRESH(state) {
-    state.refresh = Object.assign(state.refresh, getDefaulRefreshState())
-  }
+    state.refresh = Object.assign(state.refresh, getDefaultRefreshState())
+  },
 }
 
 export default {
@@ -77,5 +69,5 @@ export default {
   state,
   getters,
   actions,
-  mutations
+  mutations,
 }

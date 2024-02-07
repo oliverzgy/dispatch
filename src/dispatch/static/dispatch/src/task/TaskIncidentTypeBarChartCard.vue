@@ -1,34 +1,37 @@
 <template>
-  <v-card :loading="loading">
-    <v-card-title>Types</v-card-title>
-    <apexchart type="bar" height="250" :options="chartOptions" :series="series"></apexchart>
-  </v-card>
+  <dashboard-card
+    :loading="loading"
+    type="bar"
+    :options="chartOptions"
+    :series="series"
+    title="Types"
+  />
 </template>
 
 <script>
 import { countBy, isArray, mergeWith, forEach, map } from "lodash"
+import DashboardCard from "@/dashboard/DashboardCard.vue"
 
-import VueApexCharts from "vue-apexcharts"
 export default {
   name: "TaskIncidentBarChartCard",
 
   props: {
-    value: {
+    modelValue: {
       type: Object,
-      default: function() {
+      default: function () {
         return {}
-      }
+      },
     },
     loading: {
-      type: Boolean,
-      default: function() {
+      type: [String, Boolean],
+      default: function () {
         return false
-      }
-    }
+      },
+    },
   },
 
   components: {
-    apexchart: VueApexCharts
+    DashboardCard,
   },
 
   data() {
@@ -42,46 +45,49 @@ export default {
           type: "bar",
           height: 350,
           stacked: true,
+          animations: {
+            enabled: false,
+          },
           toolbar: {
-            show: false
-          }
+            show: false,
+          },
         },
         responsive: [
           {
             options: {
               legend: {
-                position: "top"
-              }
-            }
-          }
+                position: "top",
+              },
+            },
+          },
         ],
         xaxis: {
           categories: this.categoryData || [],
           title: {
-            text: "Month"
-          }
+            text: "Month",
+          },
         },
         fill: {
-          opacity: 1
+          opacity: 1,
         },
         legend: {
-          position: "top"
-        }
+          position: "top",
+        },
       }
     },
     series() {
       let series = []
-      forEach(this.value, function(value) {
+      forEach(this.modelValue, function (value) {
         let typeCount = map(
-          countBy(value, function(item) {
+          countBy(value, function (item) {
             return item.incident.incident_type.name
           }),
-          function(value, key) {
+          function (value, key) {
             return { name: key, data: [value] }
           }
         )
 
-        series = mergeWith(series, typeCount, function(objValue, srcValue) {
+        series = mergeWith(series, typeCount, function (objValue, srcValue) {
           if (isArray(objValue)) {
             return objValue.concat(srcValue)
           }
@@ -91,8 +97,8 @@ export default {
       return series
     },
     categoryData() {
-      return Object.keys(this.value)
-    }
-  }
+      return Object.keys(this.modelValue)
+    },
+  },
 }
 </script>

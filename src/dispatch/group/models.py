@@ -1,22 +1,28 @@
-from sqlalchemy import Column, Integer, String
+from typing import Optional
 
-from dispatch.database import Base
-from dispatch.models import DispatchBase, ResourceMixin
+from pydantic import validator, Field
+from pydantic.networks import EmailStr
+
+from sqlalchemy import Column, Integer, String, ForeignKey
+
+from dispatch.database.core import Base
+from dispatch.messaging.strings import TACTICAL_GROUP_DESCRIPTION
+from dispatch.models import NameStr, PrimaryKey
+from dispatch.models import ResourceBase, ResourceMixin
 
 
 class Group(Base, ResourceMixin):
     id = Column(Integer, primary_key=True)
     name = Column(String)
     email = Column(String)
+    incident_id = Column(Integer, ForeignKey("incident.id", ondelete="CASCADE"))
+    case_id = Column(Integer, ForeignKey("case.id", ondelete="CASCADE"))
 
 
 # Pydantic models...
-class GroupBase(DispatchBase):
-    name: str
-    email: str
-    resource_id: str
-    resource_type: str
-    weblink: str
+class GroupBase(ResourceBase):
+    name: NameStr
+    email: EmailStr
 
 
 class GroupCreate(GroupBase):
@@ -24,12 +30,14 @@ class GroupCreate(GroupBase):
 
 
 class GroupUpdate(GroupBase):
-    id: int
+    id: PrimaryKey = None
 
 
 class GroupRead(GroupBase):
-    id: int
+    id: PrimaryKey
+    description: Optional[str] = Field(None, nullable=True)
 
-
-class GroupNested(GroupBase):
-    id: int
+    @validator("description", pre=True, always=True)
+    def set_description(cls, v):
+        """Sets the description"""
+        return TACTICAL_GROUP_DESCRIPTION

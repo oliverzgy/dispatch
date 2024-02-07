@@ -1,111 +1,242 @@
-from typing import List
-from fastapi import APIRouter, Depends, Request, HTTPException, Query
-from sqlalchemy.orm import Session
-from dispatch.database import get_db, search_filter_sort_paginate
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic.error_wrappers import ErrorWrapper, ValidationError
+
+from dispatch.config import DISPATCH_AUTH_REGISTRATION_ENABLED
+
+from dispatch.auth.permissions import (
+    OrganizationMemberPermission,
+    PermissionsDependency,
+)
+from dispatch.auth.service import CurrentUser
+from dispatch.exceptions import (
+    InvalidConfigurationError,
+    InvalidPasswordError,
+    InvalidUsernameError,
+)
+from dispatch.database.core import DbSession
+from dispatch.database.service import CommonParameters, search_filter_sort_paginate
+from dispatch.enums import UserRoles
+from dispatch.models import OrganizationSlug, PrimaryKey
+from dispatch.organization.models import OrganizationRead
 
 from .models import (
     UserLogin,
-    UserRegister,
-    UserRead,
-    UserUpdate,
-    UserPagination,
     UserLoginResponse,
+    UserOrganization,
+    UserPagination,
+    UserRead,
+    UserRegister,
     UserRegisterResponse,
+    UserCreate,
+    UserUpdate,
 )
-from .service import (
-    get,
-    get_by_email,
-    update,
-    create,
-    get_current_user,
-)
+from .service import get, get_by_email, update, create
+
 
 auth_router = APIRouter()
 user_router = APIRouter()
 
 
-@user_router.get("/", response_model=UserPagination)
-def get_users(
-    db_session: Session = Depends(get_db),
-    page: int = 1,
-    items_per_page: int = Query(5, alias="itemsPerPage"),
-    query_str: str = Query(None, alias="q"),
-    sort_by: List[str] = Query(None, alias="sortBy[]"),
-    descending: List[bool] = Query(None, alias="descending[]"),
-    fields: List[str] = Query(None, alias="field[]"),
-    ops: List[str] = Query(None, alias="op[]"),
-    values: List[str] = Query(None, alias="value[]"),
+@user_router.get(
+    "",
+    dependencies=[
+        Depends(
+            PermissionsDependency(
+                [
+                    OrganizationMemberPermission,
+                ]
+            )
+        )
+    ],
+    response_model=UserPagination,
+)
+def get_users(organization: OrganizationSlug, common: CommonParameters):
+    """Gets all organization users."""
+    common["filter_spec"] = {
+        "and": [{"model": "Organization", "op": "==", "field": "slug", "value": organization}]
+    }
+
+    items = search_filter_sort_paginate(model="DispatchUser", **common)
+
+    return {
+        "items": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "projects": u.projects,
+                "role": u.get_organization_role(organization),
+            }
+            for u in items["items"]
+        ],
+        "itemsPerPage": items["itemsPerPage"],
+        "page": items["page"],
+        "total": items["total"],
+    }
+
+
+@user_router.post(
+    "",
+    response_model=UserRead,
+)
+def create_user(
+    user_in: UserCreate,
+    organization: OrganizationSlug,
+    db_session: DbSession,
+    current_user: CurrentUser,
 ):
-    """
-    Get all users.
-    """
-    return search_filter_sort_paginate(
-        db_session=db_session,
-        model="DispatchUser",
-        query_str=query_str,
-        page=page,
-        items_per_page=items_per_page,
-        sort_by=sort_by,
-        descending=descending,
-        fields=fields,
-        values=values,
-        ops=ops,
-    )
+    """Creates a new user."""
+    user = get_by_email(db_session=db_session, email=user_in.email)
+    if user:
+        raise ValidationError(
+            [
+                ErrorWrapper(
+                    InvalidConfigurationError(msg="A user with this email already exists."),
+                    loc="email",
+                )
+            ],
+            model=UserCreate,
+        )
+
+    current_user_organization_role = current_user.get_organization_role(organization)
+    if current_user_organization_role != UserRoles.owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=[
+                {
+                    "msg": "You don't have permissions to create a new user for this organization. Please, contact the organization's owner."
+                }
+            ],
+        )
+
+    user = create(db_session=db_session, organization=organization, user_in=user_in)
+    return user
 
 
 @user_router.get("/{user_id}", response_model=UserRead)
-def get_user(*, db_session: Session = Depends(get_db), user_id: int):
-    """
-    Get a user.
-    """
+def get_user(db_session: DbSession, user_id: PrimaryKey):
+    """Get a user."""
     user = get(db_session=db_session, user_id=user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="The user with this id does not exist.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A user with this id does not exist."}],
+        )
+
     return user
 
 
-@user_router.put("/{user_id}", response_model=UserUpdate)
-def update_user(*, db_session: Session = Depends(get_db), user_id: int, user_in: UserUpdate):
-    """
-    Update a user.
-    """
+@user_router.put(
+    "/{user_id}",
+    response_model=UserRead,
+)
+def update_user(
+    db_session: DbSession,
+    user_id: PrimaryKey,
+    organization: OrganizationSlug,
+    user_in: UserUpdate,
+    current_user: CurrentUser,
+):
+    """Update a user."""
     user = get(db_session=db_session, user_id=user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="The user with this id does not exist.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=[{"msg": "A user with this id does not exist."}],
+        )
 
-    user = update(db_session=db_session, user=user, user_in=user_in)
+    if user_in.role:
+        # New user role is provided
+        user_organization_role = user.get_organization_role(organization)
+        if user_organization_role != user_in.role:
+            # New user role provided is different than current user role
+            current_user_organization_role = current_user.get_organization_role(organization)
+            if current_user_organization_role != UserRoles.owner:
+                # We don't allow the role change if user requesting the change does not have owner role
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=[
+                        {
+                            "msg": "You don't have permissions to update the user's role. Please, contact the organization's owner."
+                        }
+                    ],
+                )
 
-    return user
+    # add organization information
+    user_in.organizations = [
+        UserOrganization(role=user_in.role, organization=OrganizationRead(name=organization))
+    ]
+
+    # we currently only allow user password changes via CLI, not UI/API.
+    user_in.password = None
+
+    return update(db_session=db_session, user=user, user_in=user_in)
+
+
+@auth_router.get("/me", response_model=UserRead)
+def get_me(
+    *,
+    db_session: DbSession,
+    current_user: CurrentUser,
+):
+    return current_user
 
 
 @auth_router.post("/login", response_model=UserLoginResponse)
 def login_user(
     user_in: UserLogin,
-    db_session: Session = Depends(get_db),
+    organization: OrganizationSlug,
+    db_session: DbSession,
 ):
     user = get_by_email(db_session=db_session, email=user_in.email)
     if user and user.check_password(user_in.password):
-        return {"token": user.token}
-    raise HTTPException(status_code=400, detail="Invalid username or password")
+        projects = []
+        for user_project in user.projects:
+            projects.append(
+                {
+                    "project": user_project.project,
+                    "default": user_project.default,
+                    "role": user_project.role,
+                }
+            )
+        return {"projects": projects, "token": user.token}
+
+    raise ValidationError(
+        [
+            ErrorWrapper(
+                InvalidUsernameError(msg="Invalid username."),
+                loc="username",
+            ),
+            ErrorWrapper(
+                InvalidPasswordError(msg="Invalid password."),
+                loc="password",
+            ),
+        ],
+        model=UserLogin,
+    )
 
 
-@auth_router.post("/register", response_model=UserRegisterResponse)
 def register_user(
     user_in: UserRegister,
-    db_session: Session = Depends(get_db),
+    organization: OrganizationSlug,
+    db_session: DbSession,
 ):
     user = get_by_email(db_session=db_session, email=user_in.email)
-    if not user:
-        user = create(db_session=db_session, user_in=user_in)
-    else:
-        raise HTTPException(status_code=400, detail="User with that email address exists.")
+    if user:
+        raise ValidationError(
+            [
+                ErrorWrapper(
+                    InvalidConfigurationError(msg="A user with this email already exists."),
+                    loc="email",
+                )
+            ],
+            model=UserRegister,
+        )
 
+    user = create(db_session=db_session, organization=organization, user_in=user_in)
     return user
 
 
-@user_router.get("/me", response_model=UserRead)
-def get_me(
-    req: Request,
-    db_session: Session = Depends(get_db),
-):
-    return get_current_user(request=req)
+if DISPATCH_AUTH_REGISTRATION_ENABLED:
+    register_user = auth_router.post("/register", response_model=UserRegisterResponse)(
+        register_user
+    )

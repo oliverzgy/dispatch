@@ -8,19 +8,14 @@ function login(to, from, next) {
     next()
   } else {
     // prevent redirect loop
-    if (to.path !== "/login") {
-      next("/login")
+    if (to.path !== "/default/auth/login") {
+      next("/default/auth/login")
     } else {
       next()
     }
   }
 }
 
-function logout(next) {
-  next()
-}
-
 export default {
   login,
-  logout
 }

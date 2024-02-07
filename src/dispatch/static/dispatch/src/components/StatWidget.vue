@@ -1,19 +1,21 @@
 <template>
-  <v-card class="widget-card">
+  <v-card variant="outlined">
     <v-card-text class="pa-0">
-      <v-container class="pa-0">
-        <div class="layout row ma-0">
-          <div class="sm4 xs4 flex">
-            <div class="layout column ma-0 justify-center align-center">
-              <v-icon size="76px">{{ icon }}</v-icon>
+      <v-container>
+        <v-row dense>
+          <v-col cols="4" class="d-flex align-center justify-center">
+            <v-icon size="76">
+              {{ icon }}
+            </v-icon>
+          </v-col>
+          <v-col class="d-flex flex-column justify-center">
+            <span class="text-caption">{{ subTitle }}</span>
+            <div class="text-h5">
+              {{ title }}
             </div>
-          </div>
-          <div class="layout column ma-0 justify-center">
-            <span class="caption">{{ subTitle }}</span>
-            <div class="headline">{{ title }}</div>
-            <span class="caption">{{ supTitle }}</span>
-          </div>
-        </div>
+            <span class="text-caption">{{ supTitle }}</span>
+          </v-col>
+        </v-row>
       </v-container>
     </v-card-text>
   </v-card>
@@ -24,28 +26,28 @@ export default {
   props: {
     supTitle: {
       type: String,
-      required: false
+      default: "",
     },
     subTitle: {
       type: String,
-      required: false
+      default: "",
     },
     title: {
       type: [Number, String],
-      required: false
+      default: "",
     },
     icon: {
       type: String,
-      required: false
+      default: "",
     },
     color: {
       type: String,
-      required: false
-    }
+      default: "",
+    },
   },
 
   data() {
     return {}
-  }
+  },
 }
 </script>

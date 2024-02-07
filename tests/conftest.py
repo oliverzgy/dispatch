@@ -1,52 +1,76 @@
 import pytest
-
-from sqlalchemy_utils import create_database, database_exists, drop_database
-from starlette.testclient import TestClient
+from sqlalchemy_utils import drop_database, database_exists
 from starlette.config import environ
+from starlette.testclient import TestClient
 
 # set test config
 environ["DATABASE_CREDENTIALS"] = "postgres:dispatch"
 environ["DATABASE_HOSTNAME"] = "localhost"
-environ["DISPATCH_HELP_EMAIL"] = "example@example.com"
-environ["DISPATCH_HELP_SLACK_CHANNEL"] = "help-me"
+environ["DATABASE_NAME"] = "dispatch-test"
+environ["DISPATCH_ENCRYPTION_KEY"] = "test123"
+environ["DISPATCH_JWT_SECRET"] = "test123"
 environ["DISPATCH_UI_URL"] = "https://example.com"
-environ["SLACK_APP_USER_SLUG"] = "XXX"
-environ["INCIDENT_NOTIFICATION_CONVERSATIONS"] = "sirt-dev-test-notify"
-environ["INCIDENT_NOTIFICATION_DISTRIBUTION_LISTS"] = "sirt-dev-test-notify@example.com"
-environ["INCIDENT_STORAGE_FOLDER_ID"] = "XXX"
-environ["JWKS_URL"] = "example.com"
 environ["ENV"] = "pytest"
-environ["DISPATCH_AUTHENTICATION_PROVIDER_SLUG"] = ""  # disable authentication for tests
+environ["JWKS_URL"] = "example.com"
 environ["METRIC_PROVIDERS"] = ""  # TODO move this to the default
+environ["SECRET_PROVIDER"] = ""
 environ["STATIC_DIR"] = ""  # we don't need static files for tests
 
 from dispatch import config
-from dispatch.database import Base, engine, SessionLocal
+from dispatch.database.core import engine
+from dispatch.database.manage import init_database
 
+from .database import Session
 from .factories import (
+    CaseFactory,
+    CasePriorityFactory,
+    CaseSeverityFactory,
+    CaseTypeFactory,
     ConferenceFactory,
     ConversationFactory,
     DefinitionFactory,
+    DispatchUserFactory,
     DocumentFactory,
+    EntityFactory,
+    EntityTypeFactory,
     EventFactory,
+    FeedbackFactory,
     GroupFactory,
+    IncidentCostFactory,
+    CostModelFactory,
+    CostModelActivityFactory,
+    IncidentCostTypeFactory,
     IncidentFactory,
     IncidentPriorityFactory,
+    IncidentRoleFactory,
     IncidentTypeFactory,
     IndividualContactFactory,
+    NotificationFactory,
+    OrganizationFactory,
+    ParticipantActivityFactory,
     ParticipantFactory,
     ParticipantRoleFactory,
-    PolicyFactory,
-    RecommendationAccuracyFactory,
+    PluginFactory,
+    PluginEventFactory,
+    PluginInstanceFactory,
+    ProjectFactory,
     RecommendationFactory,
-    ServiceFactory,
+    RecommendationMatchFactory,
     ReportFactory,
+    SearchFilterFactory,
+    ServiceFactory,
+    SignalFactory,
+    SignalFilterFactory,
+    SignalInstanceFactory,
     StorageFactory,
     TagFactory,
+    TagTypeFactory,
     TaskFactory,
     TeamContactFactory,
     TermFactory,
     TicketFactory,
+    WorkflowFactory,
+    WorkflowInstanceFactory,
 )
 
 
@@ -70,8 +94,8 @@ def pytest_runtest_makereport(item, call):
 @pytest.fixture(scope="session")
 def testapp():
     # we only want to use test plugins so unregister everybody else
-    from dispatch.plugins.base import unregister, plugins
     from dispatch.main import app
+    from dispatch.plugins.base import plugins, unregister
 
     for p in plugins.all():
         unregister(p)
@@ -79,27 +103,33 @@ def testapp():
     yield app
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def db():
     if database_exists(str(config.SQLALCHEMY_DATABASE_URI)):
         drop_database(str(config.SQLALCHEMY_DATABASE_URI))
 
-    create_database(str(config.SQLALCHEMY_DATABASE_URI))
-    Base.metadata.create_all(engine)  # Create the tables.
-    _db = SessionLocal()
-    yield _db
+    init_database(engine)
+    schema_engine = engine.execution_options(
+        schema_translate_map={
+            None: "dispatch_organization_default",
+            "dispatch_core": "dispatch_core",
+        }
+    )
+    Session.configure(bind=schema_engine)
+    yield
     drop_database(str(config.SQLALCHEMY_DATABASE_URI))
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="function", autouse=True)
 def session(db):
     """
     Creates a new database session with (with working transaction)
     for test duration.
     """
-    db.begin_nested()
-    yield db
-    db.rollback()
+    session = Session()
+    session.begin_nested()
+    yield session
+    session.rollback()
 
 
 @pytest.fixture(scope="function")
@@ -225,8 +255,32 @@ def ticket_plugin():
 
 
 @pytest.fixture
-def Tag(session):
+def workflow_plugin():
+    from dispatch.plugins.base import register
+    from dispatch.plugins.dispatch_test.workflow import TestWorkflowPlugin
+
+    register(TestWorkflowPlugin)
+    return TestWorkflowPlugin
+
+
+@pytest.fixture
+def user(session):
+    return DispatchUserFactory()
+
+
+@pytest.fixture
+def tag(session):
     return TagFactory()
+
+
+@pytest.fixture
+def tag_type(session):
+    return TagTypeFactory()
+
+
+@pytest.fixture
+def tag_types(session):
+    return [TagTypeFactory(), TagTypeFactory()]
 
 
 @pytest.fixture
@@ -280,6 +334,11 @@ def incident_priorities(session):
 
 
 @pytest.fixture
+def incident_role(session):
+    return IncidentRoleFactory()
+
+
+@pytest.fixture
 def incident_type(session):
     return IncidentTypeFactory()
 
@@ -306,7 +365,7 @@ def participant_roles(session):
 
 @pytest.fixture
 def participant(session):
-    return ParticipantFactory()
+    return ParticipantFactory(individual=IndividualContactFactory())
 
 
 @pytest.fixture
@@ -315,13 +374,28 @@ def participants(session):
 
 
 @pytest.fixture
-def policy(session):
-    return PolicyFactory()
+def organization(session):
+    return OrganizationFactory()
+
+
+@pytest.fixture
+def organizations(session):
+    return [OrganizationFactory(), OrganizationFactory()]
+
+
+@pytest.fixture
+def project(session):
+    return ProjectFactory()
+
+
+@pytest.fixture
+def projects(session):
+    return [ProjectFactory(), ProjectFactory()]
 
 
 @pytest.fixture
 def recommendation_accuracy(session):
-    return RecommendationAccuracyFactory()
+    return RecommendationMatchFactory()
 
 
 @pytest.fixture
@@ -345,8 +419,48 @@ def report(session):
 
 
 @pytest.fixture
+def reports(session):
+    return [ReportFactory(), ReportFactory()]
+
+
+@pytest.fixture()
+def entity(session):
+    return EntityFactory()
+
+
+@pytest.fixture()
+def entity_type(session):
+    return EntityTypeFactory()
+
+
+@pytest.fixture()
+def entity_types(session):
+    return [EntityTypeFactory(), EntityTypeFactory()]
+
+
+@pytest.fixture()
+def signal(session):
+    return SignalFactory()
+
+
+@pytest.fixture()
+def signal_filter(session):
+    return SignalFilterFactory()
+
+
+@pytest.fixture()
+def signal_instance(session):
+    return SignalInstanceFactory()
+
+
+@pytest.fixture
 def storage(session):
     return StorageFactory()
+
+
+@pytest.fixture
+def storages(session):
+    return [StorageFactory(), StorageFactory()]
 
 
 @pytest.fixture
@@ -357,6 +471,11 @@ def task(session):
 @pytest.fixture
 def team_contact(session):
     return TeamContactFactory()
+
+
+@pytest.fixture
+def team_contacts(session):
+    return [TeamContactFactory(), TeamContactFactory()]
 
 
 @pytest.fixture
@@ -375,8 +494,38 @@ def tickets(session):
 
 
 @pytest.fixture
+def case(session):
+    return CaseFactory()
+
+
+@pytest.fixture
+def new_case(session):
+    return CaseFactory(status="New")
+
+
+@pytest.fixture
+def case_priority(session):
+    return CasePriorityFactory()
+
+
+@pytest.fixture
+def case_severity(session):
+    return CaseSeverityFactory()
+
+
+@pytest.fixture
+def case_type(session):
+    return CaseTypeFactory()
+
+
+@pytest.fixture
 def incident(session):
     return IncidentFactory()
+
+
+@pytest.fixture
+def participant_activity(session):
+    return ParticipantActivityFactory()
 
 
 @pytest.fixture
@@ -387,3 +536,103 @@ def event(session):
 @pytest.fixture
 def events(session):
     return [EventFactory(), EventFactory()]
+
+
+@pytest.fixture
+def feedback(session):
+    return FeedbackFactory()
+
+
+@pytest.fixture
+def feedbacks(session):
+    return [FeedbackFactory(), FeedbackFactory()]
+
+
+@pytest.fixture
+def incident_cost(session):
+    return IncidentCostFactory()
+
+
+@pytest.fixture
+def incident_costs(session):
+    return [IncidentCostFactory(), IncidentCostFactory()]
+
+
+@pytest.fixture
+def incident_cost_type(session):
+    return IncidentCostTypeFactory()
+
+
+@pytest.fixture
+def incident_cost_types(session):
+    return [IncidentCostTypeFactory(), IncidentCostTypeFactory()]
+
+
+@pytest.fixture
+def notification(session):
+    return NotificationFactory()
+
+
+@pytest.fixture
+def notifications(session):
+    return [NotificationFactory(), NotificationFactory()]
+
+
+@pytest.fixture
+def search_filter(session):
+    return SearchFilterFactory()
+
+
+@pytest.fixture
+def search_filters(session):
+    return [SearchFilterFactory(), SearchFilterFactory()]
+
+
+@pytest.fixture
+def plugin(session):
+    return PluginFactory()
+
+
+@pytest.fixture
+def plugins(session):
+    return [PluginFactory(), PluginFactory()]
+
+
+@pytest.fixture
+def plugin_instance(session):
+    return PluginInstanceFactory()
+
+
+@pytest.fixture
+def conversation_plugin_instance(session, conversation_plugin):
+    return PluginInstanceFactory(plugin=PluginFactory(slug=conversation_plugin.slug))
+
+
+@pytest.fixture
+def workflow_plugin_instance(session, workflow_plugin):
+    return PluginInstanceFactory(plugin=PluginFactory(slug=workflow_plugin.slug))
+
+
+@pytest.fixture
+def workflow(session, workflow_plugin_instance):
+    return WorkflowFactory(plugin_instance=workflow_plugin_instance)
+
+
+@pytest.fixture
+def workflow_instance(session):
+    return WorkflowInstanceFactory()
+
+
+@pytest.fixture
+def plugin_event(session):
+    return PluginEventFactory()
+
+
+@pytest.fixture
+def cost_model(session):
+    return CostModelFactory()
+
+
+@pytest.fixture
+def cost_model_activity(session):
+    return CostModelActivityFactory()

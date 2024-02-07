@@ -1,49 +1,42 @@
 <template>
   <v-app id="dispatch">
     <!--<loading />-->
+    <organization-banner />
     <app-toolbar />
     <app-drawer />
-    <snackbar />
+    <notification-snackbars-wrapper />
+
     <refresh />
-    <v-content>
-      <!-- Page Header -->
-      <page-header />
-      <div class="page-wrapper">
-        <v-container pa-4 grid-list-lg>
+    <v-main>
+      <div>
+        <v-container fluid class="ma-0 pa-0">
           <router-view />
         </v-container>
       </div>
-      <!-- App Footer -->
-      <v-footer height="auto" class="pa-3 app--footer">
-        <span class="caption">Netflix Security &copy; {{ new Date().getFullYear() }}</span>
-        <v-spacer />
-        <span class="caption mr-1">Be Secure</span>
-        <v-icon color="pink" small>favorite</v-icon>
-      </v-footer>
-    </v-content>
+    </v-main>
     <!-- Go to top -->
   </v-app>
 </template>
 
 <script>
-import AppDrawer from "@/components/AppDrawer"
-import AppToolbar from "@/components/AppToolbar"
-import PageHeader from "@/components/PageHeader"
-import Snackbar from "@/components/Snackbar.vue"
+import AppDrawer from "@/components/AppDrawer.vue"
+import AppToolbar from "@/components/AppToolbar.vue"
 import Refresh from "@/components/Refresh.vue"
+import NotificationSnackbarsWrapper from "@/components/NotificationSnackbarsWrapper.vue"
+import OrganizationBanner from "@/organization/OrganizationBanner.vue"
 
 export default {
   components: {
     AppDrawer,
     AppToolbar,
-    PageHeader,
-    Snackbar,
-    Refresh
+    Refresh,
+    NotificationSnackbarsWrapper,
+    OrganizationBanner,
   },
 
   created() {
     this.$vuetify.theme.light = true
-  }
+  },
 }
 </script>
 

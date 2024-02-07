@@ -9,32 +9,39 @@ import functools
 import io
 import json
 import logging
-import tempfile
-from enum import Enum
 from typing import Any, List
+from datetime import datetime, timedelta, timezone
 
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload
+from http import HTTPStatus
+from ssl import SSLError
 from tenacity import TryAgain, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from dispatch.enums import DispatchEnum
 
 log = logging.getLogger(__name__)
 
 
-class UserTypes(str, Enum):
+class UserTypes(DispatchEnum):
     user = "user"
     group = "group"
     domain = "domain"
     anyone = "anyone"
 
 
-class Roles(str, Enum):
+class Roles(DispatchEnum):
+    # NOTE: https://developers.google.com/drive/api/guides/ref-roles
     owner = "owner"
     organizer = "organizer"
     file_organizer = "fileOrganizer"
     writer = "writer"
     commenter = "commenter"
     reader = "reader"
+
+
+class Activity(DispatchEnum):
+    comment = "COMMENT"
 
 
 def paginated(data_key):
@@ -53,6 +60,9 @@ def paginated(data_key):
                     kwargs["fields"] = ",".join(fields)
 
                 response = func(*args, **kwargs)
+                if not response.get(data_key):
+                    break
+
                 results += response.get(data_key)
 
                 # stop if we hit an empty string
@@ -72,26 +82,35 @@ def paginated(data_key):
     return decorator
 
 
-# google sometimes has transient errors
 @retry(
     stop=stop_after_attempt(5),
     retry=retry_if_exception_type(TryAgain),
     wait=wait_exponential(multiplier=1, min=2, max=5),
 )
 def make_call(client: Any, func: Any, propagate_errors: bool = False, **kwargs):
-    """Make an Google client api call."""
+    """Makes a Google API call."""
     try:
         return getattr(client, func)(**kwargs).execute()
     except HttpError as e:
-        if e.resp.status in [300, 429, 500, 502, 503, 504]:
-            log.debug("Google encountered an error retrying...")
-            raise TryAgain
+        if e.resp.status in [
+            HTTPStatus.MULTIPLE_CHOICES,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            HTTPStatus.BAD_GATEWAY,
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            HTTPStatus.GATEWAY_TIMEOUT,
+        ]:
+            log.debug("We encountered an HTTP error. Retrying...")
+            raise TryAgain from None
 
         if propagate_errors:
-            raise HttpError
+            raise HttpError from None
 
-        errors = json.loads(e.content.decode())
-        raise Exception(f"Request failed. Errors: {errors}")
+        error = json.loads(e.content.decode())
+        raise Exception(f"Google request failed. Error: {error}") from None
+    except SSLError as e:
+        log.debug("We encountered an SSL error. Error: {e}")
+        raise Exception(f"Google request failed. Error: {e}") from None
 
 
 @retry(wait=wait_exponential(multiplier=1, max=10))
@@ -100,33 +119,17 @@ def upload_chunk(request: Any):
     try:
         return request.next_chunk()
     except HttpError as e:
-        if e.resp.status in [500, 502, 503, 504]:
+        if e.resp.status in [
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            HTTPStatus.BAD_GATEWAY,
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            HTTPStatus.GATEWAY_TIMEOUT,
+        ]:
             # Call next_chunk() agai, but use an exponential backoff for repeated errors.
             raise e
 
 
 #  TODO add retry
-def upload_file(client: Any, path: str, name: str, mimetype: str):
-    """Uploads a file."""
-    media = MediaFileUpload(path, mimetype=mimetype, resumable=True)
-
-    try:
-        request = client.files().create(media_body=media, body={"name": name})
-        response = None
-
-        while not response:
-            _, response = upload_chunk(request)
-        return response
-    except HttpError as e:
-        if e.resp.status in [404]:
-            # Start the upload all over again.
-            raise TryAgain
-        else:
-            raise Exception(
-                f"Failed to upload file. Name: {name} Path: {path} MIMEType: {mimetype}"
-            )
-
-
 def get_file(client: Any, file_id: str):
     """Gets a file's metadata."""
     return make_call(
@@ -138,21 +141,18 @@ def get_file(client: Any, file_id: str):
     )
 
 
-#  TODO add retry
-def download_file(client: Any, file_id: str):
-    """Downloads a file."""
-    request = client.files().get_media(fileId=file_id)
-    fp = tempfile.NamedTemporaryFile()
-    downloader = MediaIoBaseDownload(fp, request)
-
-    response = False
-    try:
-        while not response:
-            _, response = downloader.next_chunk()
-        return fp
-    except HttpError:
-        # Do not retry. Log the error and fail.
-        raise Exception(f"Failed to download file. Id: {file_id}")
+@paginated("activities")
+def get_activity(
+    client: Any, file_id: str, activity: Activity = Activity.comment, lookback: int = 60
+):
+    """Fetches file activity."""
+    lookback_time = datetime.now(timezone.utc) - timedelta(seconds=lookback)
+    activity_filter = (
+        f"time >= {int(lookback_time.timestamp() * 1000)} AND detail.action_detail_case: {activity}"
+    )
+    return make_call(
+        client.activity(), "query", body={"filter": activity_filter, "itemName": f"items/{file_id}"}
+    )
 
 
 def download_google_document(client: Any, file_id: str, mime_type: str = "text/plain"):
@@ -169,8 +169,8 @@ def download_google_document(client: Any, file_id: str, mime_type: str = "text/p
             _, response = downloader.next_chunk()
         return fp.getvalue().decode("utf-8")
     except (HttpError, OSError):
-        # Do no retry. Log the error fail.
-        raise Exception(f"Failed to export the file. Id: {file_id} MimeType: {mime_type}")
+        # Do no retry and raise exception
+        raise Exception(f"Failed to export the file. Id: {file_id} MimeType: {mime_type}") from None
 
 
 def create_file(
@@ -178,12 +178,15 @@ def create_file(
     parent_id: str,
     name: str,
     members: List[str],
-    role: Roles = Roles.writer.value,
+    role: Roles = Roles.writer,
     file_type: str = "folder",
 ):
     """Creates a new folder with the specified parents."""
-    mimetype = "application/vnd.google-apps.document"
-    if file_type == "folder":
+    if file_type == "document":
+        mimetype = "application/vnd.google-apps.document"
+    elif file_type == "sheet":
+        mimetype = "application/vnd.google-apps.spreadsheet"
+    elif file_type == "folder":
         mimetype = "application/vnd.google-apps.folder"
 
     file_metadata = {"name": name, "mimeType": mimetype, "parents": [parent_id]}
@@ -196,8 +199,9 @@ def create_file(
         supportsAllDrives=True,
     )
 
-    for member in members:
-        add_permission(client, member, file_data["id"], role, "user")
+    if members:
+        for member in members:
+            add_permission(client, member, file_data["id"], role, "user")
 
     return file_data
 
@@ -217,16 +221,28 @@ def list_files(client: any, team_drive_id: str, q: str = None, **kwargs):
     )
 
 
-@paginated("teamDrives")
-def list_team_drives(client, **kwargs):
-    """Lists all available team drives."""
-    return make_call(client.teamdrives(), "list", **kwargs)
-
-
 @paginated("comments")
 def list_comments(client: Any, file_id: str, **kwargs):
     """Lists all available comments on file."""
     return make_call(client.comments(), "list", fileId=file_id, fields="*", **kwargs)
+
+
+def get_comment(client: Any, file_id: str, comment_id: str, **kwargs):
+    """Gets a specific comment."""
+    return make_call(
+        client.comments(), "get", fileId=file_id, commentId=comment_id, fields="*", **kwargs
+    )
+
+
+def get_person(client: Any, person_id: str, **kwargs):
+    """Gets a person's metadata given their people id."""
+    return make_call(
+        client.people(),
+        "get",
+        resourceName=person_id,
+        personFields="emailAddresses",
+        **kwargs,
+    )
 
 
 def add_reply(
@@ -258,9 +274,18 @@ def copy_file(client: Any, folder_id: str, file_id: str, new_file_name: str):
     )
 
 
-def delete_file(client: Any, folder_id: str, file_id: str):
-    """Deletes a file from a teamdrive."""
-    return make_call(client.files(), "delete", fileId=file_id, supportsAllDrives=True)
+def delete_file(client: Any, file_id: str):
+    """Deletes a folder or file from a Google Drive."""
+    return make_call(client.files(), "trash", fileId=file_id, supportsAllDrives=True)
+
+
+def mark_as_readonly(
+    client: Any,
+    file_id: str,
+):
+    """Adds the 'copyRequiresWriterPermission' capability to the given file."""
+    capability = {"copyRequiresWriterPermission": True}
+    return make_call(client.files(), "update", fileId=file_id, body=capability)
 
 
 def add_domain_permission(
@@ -270,7 +295,7 @@ def add_domain_permission(
     role: Roles = Roles.commenter,
     user_type: UserTypes = UserTypes.domain,
 ):
-    """Adds a domain permission to team drive or file."""
+    """Adds a domain permission to a team drive or file."""
     permission = {"type": user_type, "role": role, "domain": domain}
     return make_call(
         client.permissions(),
@@ -290,7 +315,7 @@ def add_permission(
     role: Roles = Roles.owner,
     user_type: UserTypes = UserTypes.user,
 ):
-    """Adds a permission to team drive"""
+    """Adds a permission to a team drive or file."""
     permission = {"type": user_type, "role": role, "emailAddress": email}
     return make_call(
         client.permissions(),
@@ -303,12 +328,12 @@ def add_permission(
     )
 
 
-def remove_permission(client: Any, email: str, folder_id: str):
-    """Removes permission from team drive or file."""
+def remove_permission(client: Any, email: str, team_drive_or_file_id: str):
+    """Removes permission from a team drive or file."""
     permissions = make_call(
         client.permissions(),
         "list",
-        fileId=folder_id,
+        fileId=team_drive_or_file_id,
         fields="permissions(id, emailAddress)",
         supportsAllDrives=True,
     )
@@ -318,14 +343,14 @@ def remove_permission(client: Any, email: str, folder_id: str):
             make_call(
                 client.permissions(),
                 "delete",
-                fileId=folder_id,
+                fileId=team_drive_or_file_id,
                 permissionId=p["id"],
                 supportsAllDrives=True,
             )
 
 
 def move_file(client: Any, folder_id: str, file_id: str):
-    """Moves a file from one team drive to another"""
+    """Moves a file from one team drive to another."""
     f = make_call(client.files(), "get", fileId=file_id, fields="parents", supportsAllDrives=True)
 
     previous_parents = ",".join(f.get("parents"))
@@ -339,8 +364,3 @@ def move_file(client: Any, folder_id: str, file_id: str):
         fields="id, name, parents, webViewLink",
         supportsAllDrives=True,
     )
-
-
-def list_permissions(client: Any, **kwargs):
-    """List all permissions for file."""
-    return make_call(client.files(), "list", **kwargs)
