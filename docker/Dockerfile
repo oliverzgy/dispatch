@@ -86,7 +86,7 @@ RUN set -x \
     && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
 
 RUN set -x \
-    && wget --quiet -O - https://deb.nodesource.com/setup_12.x | bash -
+    && wget --quiet -O - https://deb.nodesource.com/setup_18.x | bash -
 
 COPY --from=sdist /dist/*.whl /tmp/dist/
 RUN set -x \
