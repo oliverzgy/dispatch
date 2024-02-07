@@ -103,7 +103,10 @@ RUN set -x \
     && apt-get install -y --no-install-recommends \
     pkg-config postgresql-client-14 nodejs \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -x \
+    && npm config set registry https://registry.npmmirror.com \
     && npm install mjml
 
 EXPOSE 8000
