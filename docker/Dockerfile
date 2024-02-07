@@ -46,6 +46,9 @@ ENV VITE_DISPATCH_COMMIT_HASH="Unknown"
 ARG VITE_DISPATCH_COMMIT_MESSAGE
 ENV VITE_DISPATCH_COMMIT_MESSAGE="Unknown"
 
+RUN set -x \
+    && npm config set registry https://registry.npmmirror.com
+
 COPY . /usr/src/dispatch/
 RUN export YARN_CACHE_FOLDER="$(mktemp -d)" \
     && cd /usr/src/dispatch \
